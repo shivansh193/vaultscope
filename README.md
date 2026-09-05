@@ -28,7 +28,7 @@ Full design: [`docs/VaultScope_Product_Spec.docx`](docs/VaultScope_Product_Spec.
 | `frontend/` | Stage 6 — React dashboard | P4 |
 | `data/` | dataset: pcaps + ground-truth JSONs | P1 |
 | `models/` | trained model artifacts + eval metrics | P2 |
-| `tests/` | mirrors `core/`; run with `pytest` | all |
+| `tests/` | mirrors the slices above; run with `pytest` | all |
 | `docs/` | product spec + API reference + setup guide | all |
 
 Slices are developed async against the shared data model (spec Section 5) and
@@ -39,8 +39,26 @@ the UI before the backend is live.
 
 - Python **3.11**
 - `tshark` / Wireshark on `PATH` (runtime dependency of `pyshark`)
+- `pango` + `cairo` (runtime dependency of `weasyprint`, Stage 5)
 - Docker + Docker Compose (Stage 0 testbed, full-stack demo)
 - Node 18+ (Stage 6 frontend)
+
+### System dependencies
+
+```bash
+# macOS
+brew install wireshark pango           # pango pulls in cairo + glib
+# Wireshark.app installs tshark but does not put it on PATH:
+ln -sf /Applications/Wireshark.app/Contents/MacOS/tshark /opt/homebrew/bin/tshark
+
+# Debian / Ubuntu
+sudo apt install tshark libpango-1.0-0 libpangoft2-1.0-0
+```
+
+On macOS, `weasyprint` looks for pango/cairo only in the system library paths,
+so an otherwise-correct Homebrew install raises `OSError: cannot load library
+'gobject-2.0-0'`. `reporting.ensure_native_libs()` (called on `import
+reporting`) points it at Homebrew's `lib` dir — no per-shell `export` needed.
 
 ## Setup
 
@@ -53,12 +71,28 @@ pip install -r requirements-dev.txt      # full stack + test tooling
 ```
 
 `requirements.lock.txt` is a full `pip freeze` of a known-good resolve
-(Python 3.11, Windows) — use it (`pip install -r requirements.lock.txt`) if you
-hit a dependency-resolution conflict.
+(Python 3.11) — use it (`pip install -r requirements.lock.txt`) if you hit a
+dependency-resolution conflict.
+
+> `pydyf` is pinned to `0.10.0` on purpose: `weasyprint==62.3` uses the
+> pre-0.11 `pydyf` Stream API, and a floating `pydyf` installs cleanly but then
+> fails at `write_pdf()` call time. `tests/test_environment.py` covers this.
 
 `requirements.txt` is the full team manifest. Optional/stretch backends
 (`torch` for the 1D-CNN, `nfstream` for flow acceleration) are in
 `requirements-stretch.txt` — install only when working on that stretch goal.
+
+### System dependencies (not installed by pip)
+
+| Tool | Needed by | Install |
+|---|---|---|
+| `tshark` | `pyshark`, Stage 1 ingestion | macOS `brew install wireshark` · Debian/Ubuntu `apt install tshark` · Windows: install Wireshark, add to PATH |
+| pango / glib | `weasyprint`, Stage 5 reports | macOS `brew install pango libffi` · Debian/Ubuntu `apt install libpango-1.0-0 libpangoft2-1.0-0` · Windows: GTK runtime |
+
+> **macOS (Apple Silicon):** `brew install pango libffi` is enough — importing
+> `reporting` first fixes the library lookup in-process (`ctypes.util.find_library`
+> does not search `/opt/homebrew/lib`). Always `import reporting` before
+> `import weasyprint`; no shell export needed.
 
 > On Windows, `weasyprint` (Stage 5, P3) needs the GTK runtime. P2/P1 work does
 > not require it; install the P2 subset if the full install fails on your box:
@@ -70,7 +104,14 @@ hit a dependency-resolution conflict.
 pytest                 # whole suite from repo root
 pytest tests/ike_parser # one slice
 pytest -m "not slow"   # skip tests needing the full dataset / trained model
+
+ruff check . && ruff format --check .
 ```
+
+`tests/test_environment.py` is the environment smoke test: it asserts the
+directory skeleton, the importable dependency set, `tshark` on `PATH`, an
+end-to-end `scapy` → `pyshark` pcap round-trip, and `weasyprint` PDF rendering.
+Run it first on a new box.
 
 `pyproject.toml` sets `pythonpath = ["."]`, so `import core.ike_parser` works
 with no install step.

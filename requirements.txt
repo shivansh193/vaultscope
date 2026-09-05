@@ -30,6 +30,9 @@ PyYAML==6.0.2
 # --- reporting (Stage 5) ---
 Jinja2==3.1.4
 weasyprint==62.3
+# weasyprint 62.3 uses the pre-0.11 pydyf Stream API; unpinned pip resolves to
+# 0.12.x, which drops it and breaks write_pdf() at runtime (not at install).
+pydyf==0.10.0
 reportlab==4.2.5
 
 # --- backend API (Stage 5 / integration) ---
