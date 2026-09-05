@@ -26,23 +26,40 @@ const control =
 
 export default function SessionsPage() {
   const { sessions, loading, error } = useSessions();
-  // The peer graph links here with ?peer=<ip> to narrow the table to one peer.
-  const [filters, setFilters] = useState<Filters>(() => {
-    if (typeof window === "undefined") return {};
-    const peer = new URLSearchParams(window.location.search).get("peer");
-    return peer ? { peer } : {};
-  });
+  const [filters, setFilters] = useState<Filters>({});
   const [sort, setSort] = useState<SortKey>("risk");
   const [direction, setDirection] = useState<SortDirection>("asc");
   const [pageIndex, setPageIndex] = useState(0);
   const [sortTouched, setSortTouched] = useState(false);
-  const [selected, setSelected] = useState<VPNSession>();
+  // undefined = the user has not chosen yet, so a ?session= link still applies.
+  // null = they closed the panel, which must not spring back open.
+  const [selected, setSelected] = useState<VPNSession | null | undefined>(undefined);
   const job = typeof window === "undefined" ? undefined : currentJob();
 
+  // The peer graph links here with ?peer=<ip> and ?session=<id>. Read at render
+  // rather than in a mount-time initializer: after a client-side navigation the
+  // new URL is not yet in place when the initializer runs.
+  const link =
+    typeof window === "undefined"
+      ? new URLSearchParams()
+      : new URLSearchParams(window.location.search);
+  const linkedPeer = link.get("peer") ?? undefined;
+  const linkedSessionId = link.get("session");
+
+  // Spreading `filters` last lets an explicit `{ peer: undefined }` clear the
+  // linked peer, which is what the chip's dismiss button sets.
+  const effectiveFilters: Filters = { ...(linkedPeer ? { peer: linkedPeer } : {}), ...filters };
+
   const visible = useMemo(
-    () => sortSessions(filterSessions(sessions, filters), sort, direction),
-    [sessions, filters, sort, direction],
+    () => sortSessions(filterSessions(sessions, effectiveFilters), sort, direction),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- effectiveFilters is derived from filters + the URL
+    [sessions, filters, linkedPeer, sort, direction],
   );
+  const open =
+    selected === undefined
+      ? sessions.find((s) => s.session_id === linkedSessionId)
+      : (selected ?? undefined);
+  const peerFilter = effectiveFilters.peer;
   const pages = pageCount(visible.length, PER_PAGE);
   const current = Math.min(pageIndex, pages - 1);
   const rows = pageOf(visible, current, PER_PAGE);
@@ -74,14 +91,14 @@ export default function SessionsPage() {
           type="search"
           data-testid="filter-search"
           placeholder="Peer, cipher, vendor"
-          value={filters.search ?? ""}
+          value={effectiveFilters.search ?? ""}
           onChange={(e) => update({ search: e.target.value })}
           className={`${control} w-56 placeholder:text-label-tertiary`}
         />
         <select
           data-testid="filter-ike-version"
           aria-label="IKE version"
-          value={filters.ikeVersion ?? ""}
+          value={effectiveFilters.ikeVersion ?? ""}
           onChange={(e) => update({ ikeVersion: (e.target.value || undefined) as Filters["ikeVersion"] })}
           className={control}
         >
@@ -92,7 +109,7 @@ export default function SessionsPage() {
         <select
           data-testid="filter-severity"
           aria-label="Severity"
-          value={filters.severity ?? ""}
+          value={effectiveFilters.severity ?? ""}
           onChange={(e) => update({ severity: (e.target.value || undefined) as Severity })}
           className={control}
         >
@@ -116,17 +133,17 @@ export default function SessionsPage() {
 
           <CaptureSpectrum
             sessions={sessions}
-            selected={selected?.session_id}
-            onSelect={(id) => setSelected(sessions.find((s) => s.session_id === id))}
+            selected={open?.session_id}
+            onSelect={(id) => setSelected(sessions.find((s) => s.session_id === id) ?? null)}
           />
 
-          {filters.peer && (
+          {peerFilter && (
             <button
               type="button"
               onClick={() => update({ peer: undefined })}
               className="mt-4 rounded-md bg-surface-raised px-2.5 py-1 text-[length:var(--text-footnote)] text-label-secondary hover:text-label"
             >
-              Peer <span className="mono">{filters.peer}</span> ✕
+              Peer <span className="mono">{peerFilter}</span> ✕
             </button>
           )}
 
@@ -148,7 +165,7 @@ export default function SessionsPage() {
                 direction={direction}
                 onSort={toggleSort}
                 onSelect={setSelected}
-                selected={selected?.session_id}
+                selected={open?.session_id}
               />
             )}
           </div>
@@ -180,9 +197,7 @@ export default function SessionsPage() {
           )}
         </div>
 
-        {selected && (
-          <SessionDrilldown session={selected} onClose={() => setSelected(undefined)} />
-        )}
+        {open && <SessionDrilldown session={open} onClose={() => setSelected(null)} />}
       </div>
     </div>
   );
