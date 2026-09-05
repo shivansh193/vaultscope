@@ -32,7 +32,11 @@ class IkeParams(BaseModel):
     prf: str = "PRF_HMAC_SHA2_256"
     dh_group: str = "ECP256"
     pfs_status: Literal["enabled", "disabled", "unknown"] = "enabled"
-    auth_method: Literal["PSK", "RSA", "EAP", "XAUTH"] = "RSA"
+    # Spec Section 5 lists PSK | RSA | EAP | XAUTH, but real IKE also negotiates
+    # DSS and ECDSA signatures, and an opaque (encrypted) IKE_AUTH leaves the
+    # method undetermined -- None. Rules R06/R13 test `eq PSK`, so any other
+    # value (or None) is simply "not PSK".
+    auth_method: Literal["PSK", "RSA", "DSS", "ECDSA", "EAP", "XAUTH"] | None = "RSA"
     ip_version: Literal["IPv4", "IPv6"] = "IPv4"
     sa_lifetime_sec: int = 3600
     vendor: str = "unknown"

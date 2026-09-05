@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import struct
 
+from core.models import IkeParams, VPNSession
+
 from ._transforms import (
     EXCHANGE_V1_AGGRESSIVE,
     EXCHANGE_V1_IDENTITY_PROTECT,
@@ -42,7 +44,6 @@ from ._transforms import (
     V1_PAYLOAD_NAT_D,
     V1_PAYLOAD_NAT_D_DRAFT,
     V1_PAYLOAD_SA,
-    V1_PAYLOAD_VENDOR_ID,
     canon_dh_group,
     canon_v1_auth_method,
     canon_v1_encryption,
@@ -51,7 +52,6 @@ from ._transforms import (
 )
 from ._wire import IkeMessage, WireFormatError
 from .ikev2 import _normalise  # shared pcap / source ingestion
-from .models import VPNSession
 
 _ZERO_COOKIE = b"\x00" * 8
 
@@ -126,7 +126,7 @@ def _phase1_initial(messages: list[IkeMessage]) -> IkeMessage | None:
     return candidates[0]
 
 
-def _apply_phase1_sa(session: VPNSession, attrs: dict[int, int]) -> None:
+def _apply_phase1_sa(ike: dict, attrs: dict[int, int]) -> None:
     enc = attrs.get(V1_ATTR_ENCRYPTION)
     keylen = attrs.get(V1_ATTR_KEY_LENGTH)
     h = attrs.get(V1_ATTR_HASH)
@@ -134,19 +134,21 @@ def _apply_phase1_sa(session: VPNSession, attrs: dict[int, int]) -> None:
     group = attrs.get(V1_ATTR_GROUP_DESC)
 
     if enc is not None:
-        session.encryption = canon_v1_encryption(enc, keylen)
+        ike["encryption"] = canon_v1_encryption(enc, keylen)
     if h is not None:
-        session.integrity = canon_v1_integrity(h)
-        session.prf = canon_v1_prf(h)
+        ike["integrity"] = canon_v1_integrity(h)
+        ike["prf"] = canon_v1_prf(h)
     if auth is not None:
-        session.auth_method = canon_v1_auth_method(auth)
+        am = canon_v1_auth_method(auth)
+        if am is not None:
+            ike["auth_method"] = am
     if group is not None:
-        session.dh_group = canon_dh_group(group)
+        ike["dh_group"] = canon_dh_group(group)
 
     life_type = attrs.get(V1_ATTR_LIFE_TYPE)
     life = attrs.get(V1_ATTR_LIFE_DURATION)
     if life is not None and life_type in (None, V1_LIFE_TYPE_SECONDS):
-        session.sa_lifetime_sec = life
+        ike["sa_lifetime_sec"] = life
 
 
 def _analyse(messages: list[IkeMessage], ctx: dict) -> VPNSession:
@@ -156,24 +158,20 @@ def _analyse(messages: list[IkeMessage], ctx: dict) -> VPNSession:
         (m.responder_spi for m in messages if m.responder_spi != _ZERO_COOKIE), b"\x00" * 8
     )
 
-    session = VPNSession(
-        session_id=f"{icookie.hex()}-{rcookie.hex()}",
-        ike_version="IKEv1",
-        ip_version=ctx.get("ip_version"),
-        initiator_ip=ctx.get("initiator_ip"),
-        responder_ip=ctx.get("responder_ip"),
-        nat_traversal=bool(ctx.get("nat_traversal", False)),
-    )
+    ike: dict = {"version": "IKEv1", "mode": "tunnel"}
+    if ctx.get("ip_version"):
+        ike["ip_version"] = ctx["ip_version"]
+    nat = bool(ctx.get("nat_traversal", False))
 
     initial = _phase1_initial(messages)
 
     # --- Main vs Aggressive Mode -------------------------------------------
     if initial is not None:
         has_id = any(p.type == V1_PAYLOAD_ID for p in initial.payloads)
-        session.aggressive_mode = has_id or initial.exchange_type == EXCHANGE_V1_AGGRESSIVE
+        ike["aggressive_mode"] = has_id or initial.exchange_type == EXCHANGE_V1_AGGRESSIVE
     else:
         # no SA-bearing message in the capture: trust the exchange-type byte
-        session.aggressive_mode = any(m.exchange_type == EXCHANGE_V1_AGGRESSIVE for m in messages)
+        ike["aggressive_mode"] = any(m.exchange_type == EXCHANGE_V1_AGGRESSIVE for m in messages)
 
     # --- phase-1 crypto parameters ---------------------------------------
     sa_msg = initial
@@ -184,20 +182,24 @@ def _analyse(messages: list[IkeMessage], ctx: dict) -> VPNSession:
     if sa_msg is not None:
         sa = next(p for p in sa_msg.payloads if p.type == V1_PAYLOAD_SA)
         try:
-            _apply_phase1_sa(session, _first_transform_attrs(sa.raw))
+            _apply_phase1_sa(ike, _first_transform_attrs(sa.raw))
         except (WireFormatError, IndexError, struct.error):
             pass
 
-    # --- vendor IDs + NAT-D --------------------------------------------------
+    # --- NAT-D -> NAT traversal -------------------------------------------
     for m in messages:
-        for p in m.payloads:
-            if p.type == V1_PAYLOAD_VENDOR_ID:
-                session.vendor_ids.append(p.raw.hex())
-            if p.type in (V1_PAYLOAD_NAT_D, V1_PAYLOAD_NAT_D_DRAFT):
-                session.nat_traversal = True
+        if any(p.type in (V1_PAYLOAD_NAT_D, V1_PAYLOAD_NAT_D_DRAFT) for p in m.payloads):
+            nat = True
+    ike["nat_traversal"] = nat
 
-    session.capture_complete = initial is not None
-    return session
+    ike["capture_complete"] = initial is not None
+
+    return VPNSession(
+        session_id=f"{icookie.hex()}-{rcookie.hex()}",
+        initiator_ip=ctx.get("initiator_ip") or "",
+        responder_ip=ctx.get("responder_ip") or "",
+        ike=IkeParams(**ike),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -232,5 +234,5 @@ def parse_ikev1(source) -> VPNSession:
 
 def exchange_mode_name(session: VPNSession) -> str:
     """Human label for the phase-1 exchange ("Main Mode" / "Aggressive Mode")."""
-    key = EXCHANGE_V1_AGGRESSIVE if session.aggressive_mode else EXCHANGE_V1_IDENTITY_PROTECT
+    key = EXCHANGE_V1_AGGRESSIVE if session.ike.aggressive_mode else EXCHANGE_V1_IDENTITY_PROTECT
     return EXCHANGE_V1_NAMES[key]

@@ -7,20 +7,22 @@ See spec Section 4 "Stage 2 - IKE Parser" and Section 5.1 for the output schema.
 
 Public API
 ----------
-    parse_ikev2(source)            -> VPNSession        (primary IKEv2 SA)
+    parse_ikev2(source)            -> core.models.VPNSession   (primary IKEv2 SA)
     parse_ikev2_sessions(source)   -> list[VPNSession]
-    parse_ikev1(source)            -> VPNSession        (primary IKEv1 phase-1 SA)
+    parse_ikev1(source)            -> core.models.VPNSession   (primary IKEv1 phase-1 SA)
     parse_ikev1_sessions(source)   -> list[VPNSession]
-    VPNSession                     dataclass, spec Section 5.1 `ike` sub-object
 
-``source`` is a pcap path, raw IKE bytes, or an iterable of either.
-IKEv1 Quick Mode / PFS extraction lands in P2-T3.
+Both fill the ``ike`` block (``core.models.IkeParams``) of the canonical
+``VPNSession`` -- there is one session shape in the pipeline, defined in
+``core/models.py``. ``source`` is a pcap path, raw IKE bytes, or an iterable of
+either. IKEv1 Quick Mode / PFS extraction lands in P2-T3.
 """
+
+from core.models import IkeParams, VPNSession
 
 from ._wire import IkeMessage, WireFormatError, decode_message
 from .ikev1 import NoIKEv1Error, exchange_mode_name, parse_ikev1, parse_ikev1_sessions
 from .ikev2 import NoIKEv2Error, iter_ike_messages, parse_ikev2, parse_ikev2_sessions
-from .models import VPNSession
 
 __all__ = [
     "parse_ikev2",
@@ -30,6 +32,7 @@ __all__ = [
     "exchange_mode_name",
     "iter_ike_messages",
     "VPNSession",
+    "IkeParams",
     "IkeMessage",
     "decode_message",
     "WireFormatError",
