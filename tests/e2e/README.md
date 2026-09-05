@@ -15,6 +15,17 @@ cd frontend && npm run dev
 cd frontend && npx cypress run          # or: npx cypress open
 ```
 
+Against the Docker stack instead, where the console is served by nginx and the
+backend lives behind `/api`:
+
+```bash
+docker compose up --build -d
+cd frontend && CYPRESS_apiBase=/api npx cypress run
+```
+
+That run is the real check on `docker-compose.yml`: it exercises the static
+export, the `/api` proxy and the WebSocket upgrade in one pass.
+
 `fixtures/*.pcap` are generated, not hand-made — rebuild them with
 `python scripts/generate_e2e_fixtures.py` if Block A changes the wire builders
 in `tests/ike_parser/_build.py`.

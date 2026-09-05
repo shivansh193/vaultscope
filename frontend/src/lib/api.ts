@@ -83,9 +83,16 @@ export async function requestReport(jobId: string, type: ReportType): Promise<st
   return download_url.startsWith("http") ? download_url : `${API_BASE}${download_url}`;
 }
 
-/** WebSocket URL for /ws/live, derived from the HTTP base. */
+/**
+ * WebSocket URL for /ws/live, derived from the HTTP base.
+ *
+ * The base is absolute in development and relative ("/api") behind nginx,
+ * where the console is served same-origin -- so resolve against the page
+ * before switching the scheme.
+ */
 export function liveSocketUrl(nic?: string): string {
-  const url = new URL(`${API_BASE}/ws/live`);
+  const origin = typeof window === "undefined" ? "http://localhost" : window.location.href;
+  const url = new URL(`${API_BASE}/ws/live`, origin);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   if (nic) url.searchParams.set("nic", nic);
   return url.toString();

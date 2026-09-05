@@ -108,6 +108,28 @@ dependency-resolution conflict.
 > work does not require it; install the Block A subset if the full install fails on your box:
 > `pip install scapy pyshark scikit-learn xgboost numpy pandas matplotlib joblib pyyaml pytest pytest-cov`
 
+## Running the whole stack
+
+```bash
+docker compose up --build      # then open http://localhost:3000
+```
+
+Two containers: `backend` (FastAPI, tshark, weasyprint) and `frontend` (the
+console built to static files and served by nginx). nginx proxies `/api/` to
+the backend, so the console talks to it same-origin — nothing has to know the
+backend's address and no request needs a CORS preflight. `/api/ws/live` is
+proxied as a WebSocket.
+
+Analysed captures and rendered reports live on the `vaultscope-data` volume and
+survive a rebuild. `docker compose down -v` throws them away.
+
+To run the pieces separately during development:
+
+```bash
+uvicorn api.main:app --reload           # backend on :8000, Swagger at /docs
+cd frontend && npm run dev              # console on :3000
+```
+
 ## Running tests
 
 ```bash
@@ -125,6 +147,18 @@ Run it first on a new box.
 
 `pyproject.toml` sets `pythonpath = ["."]`, so `import core.ike_parser` works
 with no install step.
+
+The frontend has its own suites:
+
+```bash
+cd frontend
+npm test        # vitest: unit + component
+npm run e2e     # cypress, against a running backend on :8000 and console on :3000
+```
+
+The Cypress specs in `tests/e2e/` drive a real stack rather than a mock, so a
+green run means the browser, the API and the parser all agree. Their pcap
+fixtures are generated — rebuild with `python scripts/generate_e2e_fixtures.py`.
 
 ## Commit convention
 
