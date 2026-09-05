@@ -21,6 +21,18 @@ SEVERITY_PENALTY: dict[str, int] = {"CRITICAL": 40, "HIGH": 20, "MEDIUM": 10, "L
 SEVERITY_ORDER: list[str] = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "SAFE"]
 
 
+class CertInfo(BaseModel):
+    """What we can tell about the peer certificate in an IKE_AUTH CERT payload."""
+
+    subject: str = ""
+    issuer: str = ""
+    not_after: str = ""  # ISO8601; "" when unparsed
+    key_bits: int | None = None
+    sig_algorithm: str = ""
+    expired: bool = False
+    self_signed: bool = False
+
+
 class IkeParams(BaseModel):
     """Cryptographic negotiation parameters recovered from the IKE handshake."""
 
@@ -47,6 +59,21 @@ class IkeParams(BaseModel):
     # RFC 4303 3.4.3) has nothing to evaluate without it. Defaults to the safe
     # value so a parser that cannot determine it never trips the rule.
     anti_replay: bool = True
+
+    # --- extended signals (parser fills; "unknown"/None when undecidable) ---
+    # Stage 2 how-it-was-recovered: "parser" for a deterministic decode,
+    # "classifier" for the Stage 4a RF fallback on a truncated capture.
+    confidence_source: Literal["parser", "classifier"] = "parser"
+    # Dead Peer Detection negotiated (RFC 3706 VID / IKEv2 DPD notify). "unknown"
+    # for a capture that never reached the point where it would be announced.
+    dpd_status: Literal["enabled", "disabled", "unknown"] = "unknown"
+    # RFC 3706 keepalive interval in seconds when the peer declared one.
+    dpd_interval_sec: int | None = None
+    # Median IKE retransmission gap (ms) -- a secondary vendor fingerprint
+    # (Cisco ~10 000, strongSwan ~3 000). None when < 2 retransmits were seen.
+    retransmit_interval_ms: int | None = None
+    # Certificate facts when auth_method is RSA and a CERT payload was readable.
+    cert: CertInfo | None = None
 
 
 class FlowFeatures(BaseModel):

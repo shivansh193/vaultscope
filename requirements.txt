@@ -46,3 +46,6 @@ pydantic==2.13.5
 
 # --- schema validation (dataset labels, JSON/CEF export) ---
 jsonschema==4.23.0
+
+# --- X.509 peer-certificate analysis (Stage 2, RSA auth) ---
+cryptography==43.0.3

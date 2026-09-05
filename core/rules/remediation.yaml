@@ -180,3 +180,25 @@ replay:
   generic: |
     Enable anti-replay with a sliding window of at least 64 packets. RFC 4303
     section 3.4.3 requires sequence-number verification on every ESP SA.
+
+cert:
+  generic: |
+    Replace the expired / weak peer certificate. Use an RSA-2048+ or ECDSA
+    P-256+ key, a SHA-256+ signature, and monitor expiry. An expired IKE
+    certificate should be treated as an outage, not a warning.
+
+dpd:
+  cisco: |
+    crypto isakmp keepalive 10 2
+  strongswan: |
+    # swanctl.conf connection
+    dpd_delay = 10s
+    dpd_timeout = 30s
+  generic: |
+    Enable Dead Peer Detection (RFC 3706): a keepalive of 10-30 s so half-open
+    SAs are torn down instead of accumulating.
+
+ikev6:
+  generic: |
+    IKEv1 over IPv6 is uncommon and error-prone. Migrate the tunnel to IKEv2,
+    which has first-class IPv6 support and a simpler state machine.

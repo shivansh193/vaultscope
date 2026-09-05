@@ -78,14 +78,15 @@ class NoIKEv2Error(ValueError):
 # pcap ingestion                                                               #
 # --------------------------------------------------------------------------- #
 class _PcapMessage:
-    __slots__ = ("msg", "ip_version", "src_ip", "dst_ip", "udp_port")
+    __slots__ = ("msg", "ip_version", "src_ip", "dst_ip", "udp_port", "time")
 
-    def __init__(self, msg: IkeMessage, ip_version, src_ip, dst_ip, udp_port):
+    def __init__(self, msg: IkeMessage, ip_version, src_ip, dst_ip, udp_port, time=0.0):
         self.msg = msg
         self.ip_version = ip_version
         self.src_ip = src_ip
         self.dst_ip = dst_ip
         self.udp_port = udp_port
+        self.time = time
 
 
 def _read_pcap(path: str | os.PathLike) -> tuple[list[_PcapMessage], list[tuple[int, int]]]:
@@ -165,6 +166,7 @@ def _read_pcap(path: str | os.PathLike) -> tuple[list[_PcapMessage], list[tuple[
                 getattr(ip_layer, "src", None),
                 getattr(ip_layer, "dst", None),
                 4500 if on_4500 else 500,
+                float(getattr(pkt, "time", 0.0)),
             )
         )
     return out, esp_records
@@ -191,6 +193,11 @@ def _normalise(source) -> tuple[list[IkeMessage], dict]:
         pmsgs, esp_records = _read_pcap(source)
         ctx["saw_esp"] = bool(esp_records)
         ctx["esp_records"] = esp_records
+        # (key, timestamp) per IKE packet -- identical keys spaced apart are
+        # retransmissions (secondary vendor fingerprint).
+        ctx["ike_times"] = [
+            ((p.msg.exchange_type, p.msg.message_id, p.msg.is_response), p.time) for p in pmsgs
+        ]
         if pmsgs:
             ctx["ip_version"] = pmsgs[0].ip_version
             ctx["nat_traversal"] = any(p.udp_port == 4500 for p in pmsgs)
@@ -280,7 +287,8 @@ def anti_replay_from_esp(esp_records: list[tuple[int, int]]) -> bool | None:
 
 
 def apply_edge_cases(ike: dict, messages: list[IkeMessage], ctx: dict) -> None:
-    """P2-T4: Vendor ID fingerprint, IKE fragmentation flag, ESP anti-replay."""
+    """P2-T4 + extended signals: Vendor ID fingerprint, IKE fragmentation,
+    ESP anti-replay, Dead Peer Detection, retransmission timing, peer cert."""
     vids = [
         p.raw.hex()
         for m in messages
@@ -297,6 +305,25 @@ def apply_edge_cases(ike: dict, messages: list[IkeMessage], ctx: dict) -> None:
     replay = anti_replay_from_esp(ctx.get("esp_records") or [])
     if replay is False:
         ike["anti_replay"] = False
+
+    from ._signals import cert_from_messages, dpd_from_messages, retransmit_interval_ms
+
+    dpd_status, dpd_interval = dpd_from_messages(messages)
+    if dpd_status != "unknown":
+        ike["dpd_status"] = dpd_status
+        if dpd_interval is not None:
+            ike["dpd_interval_sec"] = dpd_interval
+    elif ike.get("capture_complete") and ike.get("version") == "IKEv1":
+        # a complete IKEv1 handshake that never announced the DPD VID
+        ike["dpd_status"] = "disabled"
+
+    rtx = retransmit_interval_ms(ctx.get("ike_times"))
+    if rtx is not None:
+        ike["retransmit_interval_ms"] = rtx
+
+    cert = cert_from_messages(messages)
+    if cert is not None:
+        ike["cert"] = cert
 
 
 def _child_sa_payload(msg: IkeMessage):
