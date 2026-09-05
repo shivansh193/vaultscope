@@ -78,7 +78,12 @@ from ._transforms import (
     canon_v1_prf,
 )
 from ._wire import IkeMessage, WireFormatError
-from .ikev2 import _normalise, apply_edge_cases  # shared pcap / source ingestion
+from .ikev2 import (  # shared pcap / source ingestion
+    _first_timestamp,
+    _frames_for,
+    _normalise,
+    apply_edge_cases,
+)
 
 _ZERO_COOKIE = b"\x00" * 8
 
@@ -292,6 +297,8 @@ def _analyse(messages: list[IkeMessage], ctx: dict) -> VPNSession:
         initiator_ip=ctx.get("initiator_ip") or "",
         responder_ip=ctx.get("responder_ip") or "",
         ike=IkeParams(**ike),
+        packet_refs=_frames_for(ctx, icookie),
+        timestamp=_first_timestamp(ctx),
     )
 
 

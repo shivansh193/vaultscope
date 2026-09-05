@@ -153,6 +153,9 @@ class VPNSession(BaseModel):
     traffic_prediction: TrafficPrediction = Field(default_factory=TrafficPrediction)
     security_assessment: SecurityAssessment = Field(default_factory=SecurityAssessment)
     reports: Reports = Field(default_factory=Reports)
+    # pcap frame numbers for this session's IKE messages -- lets an AnomalyEvent
+    # point a reviewer straight at the evidence in Wireshark.
+    packet_refs: list[int] = Field(default_factory=list)
 
 
 class AnomalyEvent(BaseModel):

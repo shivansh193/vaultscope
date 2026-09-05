@@ -78,15 +78,16 @@ class NoIKEv2Error(ValueError):
 # pcap ingestion                                                               #
 # --------------------------------------------------------------------------- #
 class _PcapMessage:
-    __slots__ = ("msg", "ip_version", "src_ip", "dst_ip", "udp_port", "time")
+    __slots__ = ("msg", "ip_version", "src_ip", "dst_ip", "udp_port", "time", "frame")
 
-    def __init__(self, msg: IkeMessage, ip_version, src_ip, dst_ip, udp_port, time=0.0):
+    def __init__(self, msg, ip_version, src_ip, dst_ip, udp_port, time=0.0, frame=0):
         self.msg = msg
         self.ip_version = ip_version
         self.src_ip = src_ip
         self.dst_ip = dst_ip
         self.udp_port = udp_port
         self.time = time
+        self.frame = frame  # 1-based frame number in the source pcap
 
 
 def _read_pcap(path: str | os.PathLike) -> tuple[list[_PcapMessage], list[tuple[int, int]]]:
@@ -112,7 +113,7 @@ def _read_pcap(path: str | os.PathLike) -> tuple[list[_PcapMessage], list[tuple[
             spi, seq = struct.unpack_from(">II", blob)
             esp_records.append((spi, seq))
 
-    for pkt in rdpcap(str(path)):
+    for _frame_i, pkt in enumerate(rdpcap(str(path)), start=1):
         if IP in pkt:
             ipv, ip_layer = "IPv4", pkt[IP]
         elif IPv6 in pkt:
@@ -167,6 +168,7 @@ def _read_pcap(path: str | os.PathLike) -> tuple[list[_PcapMessage], list[tuple[
                 getattr(ip_layer, "dst", None),
                 4500 if on_4500 else 500,
                 float(getattr(pkt, "time", 0.0)),
+                _frame_i,
             )
         )
     return out, esp_records
@@ -198,6 +200,8 @@ def _normalise(source) -> tuple[list[IkeMessage], dict]:
         ctx["ike_times"] = [
             ((p.msg.exchange_type, p.msg.message_id, p.msg.is_response), p.time) for p in pmsgs
         ]
+        # (initiator_spi hex, pcap frame number) -- anomaly evidence pointers
+        ctx["ike_frames"] = [(p.msg.initiator_spi.hex(), p.frame) for p in pmsgs]
         if pmsgs:
             ctx["ip_version"] = pmsgs[0].ip_version
             ctx["nat_traversal"] = any(p.udp_port == 4500 for p in pmsgs)
@@ -434,7 +438,23 @@ def _analyse(messages: list[IkeMessage], ctx: dict) -> VPNSession:
         initiator_ip=ctx.get("initiator_ip") or "",
         responder_ip=ctx.get("responder_ip") or "",
         ike=IkeParams(**ike),
+        packet_refs=_frames_for(ctx, init_spi),
+        timestamp=_first_timestamp(ctx),
     )
+
+
+def _frames_for(ctx: dict, init_spi: bytes) -> list[int]:
+    key = init_spi.hex()
+    return [f for spi_hex, f in ctx.get("ike_frames", []) if spi_hex == key]
+
+
+def _first_timestamp(ctx: dict) -> str:
+    times = [t for _k, t in ctx.get("ike_times", []) if t]
+    if not times:
+        return ""
+    import datetime as _dt
+
+    return _dt.datetime.fromtimestamp(min(times), tz=_dt.UTC).isoformat()
 
 
 # --------------------------------------------------------------------------- #
