@@ -41,5 +41,8 @@ uvicorn[standard]==0.32.1
 python-multipart==0.0.17
 websockets==13.1
 
+# --- canonical data model (core/models.py); also a FastAPI dependency ---
+pydantic==2.13.5
+
 # --- schema validation (dataset labels, JSON/CEF export) ---
 jsonschema==4.23.0

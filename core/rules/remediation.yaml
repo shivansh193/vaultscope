@@ -1,0 +1,182 @@
+# Vendor-specific remediation templates (product spec, Stage 5).
+#
+# Keyed by remediation group (named in rules.yaml) then by canonical vendor.
+# Grouping by fix rather than by rule keeps this at 8 groups x 6 vendors
+# instead of 15 rules x 6 vendors, with no loss of specificity: every rule
+# that calls for the same config change shares one template.
+#
+# `generic` is the RFC-compliant fallback used when the vendor could not be
+# fingerprinted. Every group MUST define it.
+
+dh_weak:
+  cisco: |
+    crypto ikev2 policy 10
+     no group 2
+     group 20 21
+  strongswan: |
+    # swanctl.conf
+    proposals = aes256gcm16-prfsha384-ecp384
+    esp_proposals = aes256gcm16-ecp384
+  juniper: |
+    set security ike proposal PROP-STRONG dh-group group20
+    delete security ike proposal PROP-STRONG dh-group group2
+  fortinet: |
+    config vpn ipsec phase1-interface
+     edit "vpn-tunnel"
+      set dhgrp 20 21
+     next
+    end
+  paloalto: |
+    # Network > Network Profiles > IKE Crypto
+    set network ike-crypto-profile STRONG dh-group group20
+  generic: |
+    Replace the MODP group with an elliptic-curve group of at least 256 bits
+    (ECP256 / group 19 or stronger). Per RFC 8247, MODP-1024 and below MUST NOT
+    be used; ECP384 (group 20) is recommended.
+
+enc_weak:
+  cisco: |
+    crypto ikev2 policy 10
+     no encryption des 3des
+     encryption aes-gcm-256
+  strongswan: |
+    # swanctl.conf
+    proposals = aes256gcm16-prfsha384-ecp384
+  juniper: |
+    set security ike proposal PROP-STRONG encryption-algorithm aes-256-gcm
+  fortinet: |
+    config vpn ipsec phase1-interface
+     edit "vpn-tunnel"
+      set proposal aes256gcm-prfsha384
+     next
+    end
+  paloalto: |
+    set network ike-crypto-profile STRONG encryption aes-256-gcm
+  generic: |
+    Replace DES / 3DES / NULL with AES-256-GCM (AEAD). Per RFC 8247, DES and
+    NULL encryption MUST NOT be used and 3DES is deprecated (SWEET32).
+
+integ_weak:
+  cisco: |
+    crypto ikev2 policy 10
+     no integrity md5 sha1
+     integrity sha384
+  strongswan: |
+    # swanctl.conf -- AEAD ciphers carry integrity implicitly
+    proposals = aes256gcm16-prfsha384-ecp384
+  juniper: |
+    set security ike proposal PROP-STRONG authentication-algorithm hmac-sha-384
+  fortinet: |
+    config vpn ipsec phase1-interface
+     edit "vpn-tunnel"
+      set proposal aes256gcm-prfsha384
+     next
+    end
+  paloalto: |
+    set network ike-crypto-profile STRONG hash sha384
+  generic: |
+    Replace MD5 or SHA-1 integrity with SHA-256 or stronger, or adopt an AEAD
+    cipher (AES-GCM) where integrity is implicit. See RFC 8247 section 3.
+
+ikev1:
+  cisco: |
+    no crypto ikev1 enable outside
+    crypto ikev2 enable outside
+  strongswan: |
+    # swanctl.conf
+    version = 2
+  juniper: |
+    set security ike gateway GW version v2-only
+  fortinet: |
+    config vpn ipsec phase1-interface
+     edit "vpn-tunnel"
+      set ike-version 2
+     next
+    end
+  paloalto: |
+    set network ike-gateway GW protocol version ikev2
+  generic: |
+    Migrate the tunnel to IKEv2. IKEv1 is deprecated by RFC 9395; Aggressive
+    Mode additionally transmits the PSK hash in cleartext and MUST NOT be used.
+
+pfs_off:
+  cisco: |
+    crypto map MAP 10 set pfs group20
+  strongswan: |
+    # swanctl.conf -- a DH group in esp_proposals enables PFS
+    esp_proposals = aes256gcm16-ecp384
+  juniper: |
+    set security ipsec policy POL perfect-forward-secrecy keys group20
+  fortinet: |
+    config vpn ipsec phase2-interface
+     edit "vpn-phase2"
+      set pfs enable
+      set dhgrp 20
+     next
+    end
+  paloalto: |
+    set network ike-crypto-profile STRONG dh-group group20
+  generic: |
+    Enable Perfect Forward Secrecy by negotiating a fresh DH exchange for each
+    Child SA. Without PFS, compromise of one key exposes all past traffic.
+
+lifetime:
+  cisco: |
+    crypto ikev2 policy 10
+     lifetime seconds 28800
+  strongswan: |
+    # swanctl.conf
+    rekey_time = 4h
+  juniper: |
+    set security ike policy POL lifetime-seconds 28800
+  fortinet: |
+    config vpn ipsec phase1-interface
+     edit "vpn-tunnel"
+      set keylife 28800
+     next
+    end
+  paloalto: |
+    set network ike-crypto-profile STRONG lifetime seconds 28800
+  generic: |
+    Reduce the SA lifetime to 8 hours (28800s) or less so key material is
+    rotated regularly. See NIST SP 800-77 section 5.
+
+frag:
+  cisco: |
+    ! Patch for CVE-2016-1287 first, then constrain fragmentation:
+    crypto ikev2 fragmentation mtu 1280
+  strongswan: |
+    # swanctl.conf
+    fragmentation = yes
+  juniper: |
+    set security ike gateway GW fragmentation disable
+  fortinet: |
+    config vpn ipsec phase1-interface
+     edit "vpn-tunnel"
+      set fragmentation disable
+     next
+    end
+  paloalto: |
+    set network ike-gateway GW protocol ikev2 fragmentation disable
+  generic: |
+    Patch the IKE fragmentation handler (CVE-2016-1287 affects Cisco ASA) and
+    lower the fragmentation MTU so IKE messages are not reassembled unbounded.
+
+replay:
+  cisco: |
+    crypto ipsec security-association replay window-size 1024
+  strongswan: |
+    # strongswan.conf
+    charon.replay_window = 1024
+  juniper: |
+    set security ipsec vpn VPN vpn-monitor-options verify-path
+    delete security ipsec vpn VPN no-anti-replay
+  fortinet: |
+    config system global
+     set anti-replay strict
+    end
+  paloalto: |
+    set network tunnel ipsec TUN anti-replay yes
+  generic: |
+    Enable anti-replay with a sliding window of at least 64 packets. RFC 4303
+    section 3.4.3 requires sequence-number verification on every ESP SA.
