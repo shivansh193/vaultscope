@@ -100,3 +100,69 @@ def test_every_event_has_a_unique_id():
     ]
     events = detect_anomalies(sessions)
     assert len({e.anomaly_id for e in events}) == len(events)
+
+
+# --- extended detectors: downgrade, NAT-T unexpected, rekey storm, evidence ---
+
+import datetime as _dt  # noqa: E402
+
+
+def _sess2(sid, src="10.0.0.1", dst="10.0.0.2", *, refs=None, ts="", **ike) -> VPNSession:
+    return VPNSession(
+        session_id=sid,
+        initiator_ip=src,
+        responder_ip=dst,
+        ike=IkeParams(**ike),
+        packet_refs=refs or [],
+        timestamp=ts,
+    )
+
+
+def test_downgrade_suspected_when_pair_has_strong_and_weak():
+    sessions = [
+        _sess2("strong", encryption="AES-256-GCM", dh_group="ECP521"),
+        _sess2("weak", encryption="DES-CBC", dh_group="MODP1024"),
+    ]
+    ev = [e for e in detect_anomalies(sessions) if e.anomaly_type == "DOWNGRADE_SUSPECTED"]
+    assert [e.session_id for e in ev] == ["weak"]
+    assert ev[0].severity == "HIGH"
+
+
+def test_no_downgrade_when_all_strong():
+    sessions = [
+        _sess2("a", encryption="AES-256-GCM", dh_group="ECP521"),
+        _sess2("b", encryption="AES-128-GCM", dh_group="ECP256"),
+    ]
+    assert "DOWNGRADE_SUSPECTED" not in _types(detect_anomalies(sessions))
+
+
+def test_nat_t_unexpected_for_public_initiator():
+    s = _sess2("pub", src="8.8.8.8", dst="1.1.1.1", nat_traversal=True)
+    ev = [e for e in detect_anomalies([s]) if e.anomaly_type == "NAT_T_UNEXPECTED"]
+    assert ev and ev[0].severity == "MEDIUM"
+
+
+def test_nat_t_ok_for_private_initiator():
+    s = _sess2("priv", src="10.0.0.5", dst="8.8.8.8", nat_traversal=True)
+    assert "NAT_T_UNEXPECTED" not in _types(detect_anomalies([s]))
+
+
+def test_rekey_storm_flagged_within_window():
+    base = _dt.datetime(2026, 1, 1, 12, 0, 0, tzinfo=_dt.UTC)
+    sessions = [
+        _sess2(f"r{i}", ts=(base + _dt.timedelta(seconds=i * 10)).isoformat()) for i in range(5)
+    ]
+    ev = [e for e in detect_anomalies(sessions) if e.anomaly_type == "REKEY_STORM"]
+    assert len(ev) == 5
+
+
+def test_rekey_spread_over_hours_is_not_a_storm():
+    base = _dt.datetime(2026, 1, 1, 12, 0, 0, tzinfo=_dt.UTC)
+    sessions = [_sess2(f"r{i}", ts=(base + _dt.timedelta(hours=i)).isoformat()) for i in range(5)]
+    assert "REKEY_STORM" not in _types(detect_anomalies(sessions))
+
+
+def test_evidence_pkts_carried_from_session():
+    s = _sess2("s1", refs=[47, 48, 49], version="IKEv1", aggressive_mode=True)
+    ev = [e for e in detect_anomalies([s]) if e.anomaly_type == "AGGRESSIVE_MODE_PROBE"]
+    assert ev[0].evidence_pkts == [47, 48, 49]
