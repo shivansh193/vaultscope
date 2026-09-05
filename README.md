@@ -160,6 +160,61 @@ The Cypress specs in `tests/e2e/` drive a real stack rather than a mock, so a
 green run means the browser, the API and the parser all agree. Their pcap
 fixtures are generated — rebuild with `python scripts/generate_e2e_fixtures.py`.
 
+## Deliverables
+
+Spec Section 13. Status as of the latest commit on `main`.
+
+| # | Deliverable | Owner | Status |
+|---|---|---|---|
+| 1 | Labeled dataset (>= 300 pcaps + JSONs) | P1 | Done — `data/`, see `data/README.md` |
+| 2 | Trained model artifacts | P2 | Not started — `models/` is empty |
+| 3 | Working prototype (`docker compose up`) | P4 | Done |
+| 4 | Executive PDF report | P3 | Done |
+| 5 | Technical HTML report | P3 | Done |
+| 6 | JSON / CEF export | P3 | Done |
+| 7 | Dashboard demo | P4 | Done |
+| 8 | Demo video (3-5 min) | All | Not started |
+| 9 | Product spec | All | Done — `docs/VaultScope_Product_Spec.docx` |
+| 10 | API reference (Swagger) | P3 | Done — `/docs` on the backend |
+| 11 | Setup guide | P4 | Done — this file |
+| 12 | Disclosed limitations | All | Done — below |
+
+## Disclosed limitations
+
+Read these before quoting any number this system produces.
+
+**The traffic-type prediction is inference, not observation.** ESP payloads are
+encrypted and stay that way. Stage 4b infers what rode a tunnel from packet
+sizes, timing, direction ratio and burstiness alone. It will be wrong sometimes;
+results are reported as a confusion matrix rather than a single accuracy figure.
+
+**The "Chat" class is a substitution.** A real messaging client cannot run in an
+isolated lab, so chat traffic is a scripted generator reproducing the shape —
+short messages in bursts with long idle gaps. Every Chat label carries
+`"substitution": true`. It is not real WhatsApp traffic and must not be
+presented as such.
+
+**The dataset is lab-clean.** One tunnel, one traffic class, no competing flows,
+no background noise, no loss. Accuracy measured on it is an upper bound; the
+field will be worse.
+
+**Every capture in the dataset shows NAT-T.** Docker's bridge network NATs, so
+IKE lands on UDP 4500 and `nat_traversal` reads true on every session. That is a
+property of the harness, not of the configuration under test.
+
+**Mid-session captures cannot report PFS.** If the capture starts after the
+handshake there is no second DH exchange to observe, so `pfs_status` is
+`unknown` rather than a guess. Same for any parameter the capture never
+revealed: `capture_complete` goes false rather than a default being passed off
+as an observation.
+
+**IKEv2 auth method is not observable.** IKE_AUTH is encrypted, so a PSK tunnel
+currently reports the model default rather than `None`. Tracked as a P2-T4 gap
+in `core/ike_parser/CLAUDE.md`; rules R06 and R13 depend on it.
+
+**The dataset is IKEv2 only.** The parser's IKEv1 path is covered by synthetic
+fixtures, not by real captures.
+
 ## Commit convention
 
 One commit per task ID from spec Section 9, e.g.
