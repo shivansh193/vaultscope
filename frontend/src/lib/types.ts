@@ -10,6 +10,16 @@ export type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "SAFE";
 
 export const SEVERITY_ORDER: Severity[] = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "SAFE"];
 
+export interface CertInfo {
+  subject: string;
+  issuer: string;
+  not_after: string;
+  key_bits: number | null;
+  sig_algorithm: string;
+  expired: boolean;
+  self_signed: boolean;
+}
+
 export interface IkeParams {
   version: "IKEv1" | "IKEv2";
   mode: "tunnel" | "transport";
@@ -27,6 +37,12 @@ export interface IkeParams {
   fragmented_ike: boolean;
   capture_complete: boolean;
   anti_replay: boolean;
+  confidence_source: "parser" | "classifier";
+  dpd_status: "enabled" | "disabled" | "unknown";
+  dpd_interval_sec: number | null;
+  retransmit_interval_ms: number | null;
+  cert: CertInfo | null;
+  msg_sizes: number[];
 }
 
 export interface FlowFeatures {
@@ -96,6 +112,19 @@ export interface VPNSession {
   traffic_prediction: TrafficPrediction;
   security_assessment: SecurityAssessment;
   reports: Reports;
+  packet_refs: number[];
+}
+
+/** Stage 4b evaluation artifacts from GET /model/metrics ({} until trained). */
+export interface ModelMetrics {
+  model_version?: string;
+  algo?: string;
+  source?: string;
+  accuracy?: number;
+  f1_macro?: number;
+  per_class?: Record<string, { precision: number; recall: number; "f1-score": number }>;
+  feature_importance?: Record<string, number>;
+  note?: string;
 }
 
 export interface AnomalyEvent {
