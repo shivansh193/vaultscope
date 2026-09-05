@@ -1,5 +1,6 @@
 "use client";
 
+import { FeatureImportance } from "@/components/charts/FeatureImportance";
 import { RiskHistogram } from "@/components/charts/RiskHistogram";
 import { ThreatMatrix } from "@/components/charts/ThreatMatrix";
 import { TrafficMix } from "@/components/charts/TrafficMix";
@@ -63,6 +64,7 @@ export default function OverviewPage() {
               <RiskHistogram sessions={sessions} />
               <TrafficMix sessions={sessions} />
               <ThreatMatrix sessions={sessions} />
+              <FeatureImportance />
             </div>
           </>
         )}

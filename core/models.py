@@ -74,6 +74,9 @@ class IkeParams(BaseModel):
     retransmit_interval_ms: int | None = None
     # Certificate facts when auth_method is RSA and a CERT payload was readable.
     cert: CertInfo | None = None
+    # On-wire byte length of each IKE message in this SA, in capture order.
+    # Implementations pad differently -- a tertiary vendor fingerprint.
+    msg_sizes: list[int] = Field(default_factory=list)
 
 
 class FlowFeatures(BaseModel):
