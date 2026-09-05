@@ -55,7 +55,9 @@ export function ingest(file: File): Promise<IngestResult> {
   return request<IngestResult>("/ingest", { method: "POST", body });
 }
 
-export const listSessions = (params: { severity?: Severity; limit?: number; offset?: number } = {}) =>
+export const listSessions = (
+  params: { severity?: Severity; job_id?: string; limit?: number; offset?: number } = {},
+) =>
   request<VPNSession[]>(`/sessions${query(params)}`);
 
 export const getSession = (sessionId: string) =>
