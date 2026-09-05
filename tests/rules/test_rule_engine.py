@@ -149,3 +149,48 @@ def test_evaluate_is_pure(make_session):
     before = session.model_dump_json()
     evaluate_rules(session)
     assert session.model_dump_json() == before
+
+
+# --- R16-R18 extended-signal rules -------------------------------------------
+
+
+def test_r16_expired_cert_is_critical(make_session):
+    from core.models import CertInfo
+
+    result = evaluate_rules(make_session(cert=CertInfo(expired=True, subject="CN=old")))
+    assert "R16" in result.triggered_rules
+    assert result.overall_severity == "CRITICAL"
+
+
+def test_r16_not_triggered_for_valid_cert(make_session):
+    from core.models import CertInfo
+
+    result = evaluate_rules(make_session(cert=CertInfo(expired=False)))
+    assert "R16" not in result.triggered_rules
+
+
+def test_r16_not_triggered_when_no_cert(make_session):
+    assert "R16" not in evaluate_rules(make_session()).triggered_rules
+
+
+def test_r17_dpd_disabled_is_low(make_session):
+    result = evaluate_rules(make_session(dpd_status="disabled"))
+    assert "R17" in result.triggered_rules
+    assert result.overall_severity == "LOW"
+
+
+def test_r17_not_triggered_for_dpd_unknown(make_session):
+    # "unknown" is a capture gap, not a proven weakness
+    assert "R17" not in evaluate_rules(make_session(dpd_status="unknown")).triggered_rules
+
+
+def test_r18_ikev1_over_ipv6_is_low(make_session):
+    result = evaluate_rules(make_session(version="IKEv1", ip_version="IPv6", auth_method="RSA"))
+    assert "R18" in result.triggered_rules
+
+
+def test_r18_not_triggered_for_ikev1_over_ipv4(make_session):
+    assert (
+        "R18"
+        not in evaluate_rules(make_session(version="IKEv1", ip_version="IPv4")).triggered_rules
+    )

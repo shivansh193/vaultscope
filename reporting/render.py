@@ -39,6 +39,9 @@ PLAIN_ENGLISH: dict[str, str] = {
     "R13": "A shared password is combined with a weak key exchange, making offline password cracking practical.",
     "R14": "This device is exposed to a known remote code execution vulnerability in its IKE fragment handling (CVE-2016-1287). Patch it.",
     "R15": "Replay protection is off, so an attacker can re-send captured traffic and have it accepted.",
+    "R16": "The peer's authentication certificate has expired. The tunnel is trusting a credential that is no longer valid; renew it immediately.",
+    "R17": "Dead Peer Detection is not enabled, so failed tunnels are not cleaned up and half-open sessions build up over time.",
+    "R18": "This tunnel runs IKEv1 over IPv6 -- an unusual combination that is frequently misconfigured. Move it to IKEv2.",
 }
 
 SEVERITY_PLAIN_ENGLISH: dict[str, str] = {
