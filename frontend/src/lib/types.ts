@@ -120,8 +120,19 @@ export interface IngestResult {
   fixture_mode: boolean;
 }
 
+/** A session both captures hold, whose assessment got worse. */
+export interface DegradedSession {
+  session_id: string;
+  base: VPNSession;
+  compare: VPNSession;
+  base_score: number;
+  compare_score: number;
+  base_severity: Severity;
+  compare_severity: Severity;
+}
+
 export interface SessionDiff {
   added: VPNSession[];
   removed: VPNSession[];
-  degraded: VPNSession[];
+  degraded: DegradedSession[];
 }
