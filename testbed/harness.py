@@ -82,7 +82,15 @@ class PeerPair:
         log = self.exec(self.initiator, "cat", "/tmp/charon.log", check=False).stdout
         raise HarnessError(f"SA did not establish within {timeout}s. charon said:\n{log[-2000:]}")
 
-    def start_capture(self, path: str = "/tmp/capture.pcap") -> None:
+    def start_capture(self, path: str = "/tmp/capture.pcap", interface: str = "eth0") -> None:
+        """Capture on the real interface, never on ``any``.
+
+        ``tcpdump -i any`` writes LINUX_SLL2, which scapy cannot decode. The
+        pcap looks fine, every packet reads as Raw, and the Stage 2 parser
+        degrades silently to a crypto-less "esp-only" session -- a whole
+        dataset can be generated that way before anyone notices. eth0 gives an
+        Ethernet linktype that round-trips through our own parser.
+        """
         _run(
             [
                 "docker",
@@ -91,13 +99,13 @@ class PeerPair:
                 self.initiator,
                 "tcpdump",
                 "-i",
-                "any",
+                interface,
                 "-w",
                 path,
                 "-U",
                 "-s",
                 "0",
-                "udp port 500 or udp port 4500 or esp or ip proto 50",
+                "udp port 500 or udp port 4500 or esp or ip6 proto 50 or ip proto 50",
             ]
         )
         time.sleep(1)  # let tcpdump open the file before traffic starts
