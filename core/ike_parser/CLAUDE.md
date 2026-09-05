@@ -52,11 +52,17 @@ There is **no `models.py` here** — one session shape lives in `core/models.py`
 
 ## Semantics worth knowing
 
-- `ike.pfs_status` is `"unknown"` unless a CHILD_SA negotiation was actually
-  observed — never guessed. Spec §12 warns against a false `"disabled"` on
-  incomplete captures (would misfire rule R10).
-- `ike.mode` (`tunnel`/`transport`) is an IPsec/phase-2 property. IKEv1 phase-1
-  leaves it at `tunnel`; Quick Mode sets it (P2-T3).
+- `ike.pfs_status` is `"unknown"` unless a CHILD_SA / Quick Mode negotiation was
+  actually observed — never guessed. Spec §12 warns against a false
+  `"disabled"` on incomplete captures (would misfire rule R10).
+- `ike.mode` (`tunnel`/`transport`) is an IPsec/phase-2 property: IKEv2
+  `USE_TRANSPORT_MODE` notify, or IKEv1 Quick Mode Encapsulation Mode attr.
+  Left at `tunnel` when no phase-2 info is in the capture.
+- **IKEv1: Quick Mode (phase 2) overrides phase 1** for `encryption`,
+  `integrity`, `dh_group`, `mode`, `sa_lifetime_sec`. The IPsec SA is what
+  protects data and is what Stage 4c should evaluate. `prf` / `aggressive_mode`
+  stay phase-1 concepts. Quick Mode is encrypted → readable only for
+  key-logged / decrypted captures + fixtures (`_wire` best-effort frames it).
 - `aggressive_mode` (IKEv1): detected from an **ID payload in the SA-bearing
   message-id-0 message**, not message count (retransmissions change count).
   Exchange-type byte (2/4) is the fallback for mid-capture starts.
@@ -67,8 +73,8 @@ There is **no `models.py` here** — one session shape lives in `core/models.py`
 |---|---|---|
 | P2-T1 IKEv2 parser | ✅ done | SA_INIT + IKE_AUTH → `core.models.VPNSession.ike` |
 | P2-T2 IKEv1 Main/Aggressive | ✅ done | phase-1 params + mode detection |
-| P2-T3 IKEv1 Quick Mode / PFS | ⬜ next | KE-in-QM → PFS, phase-2 cipher, tunnel/transport |
-| P2-T4 edge cases / VID fingerprint | ⬜ | fragmented IKE (`fragmented_ike`), vendor DB (`vendor`), anti-replay |
+| P2-T3 IKEv1 Quick Mode / PFS | ✅ done | KE/group → PFS, phase-2 cipher/integrity, encap → tunnel/transport (overrides phase 1) |
+| P2-T4 edge cases / VID fingerprint | ⬜ next | fragmented IKE (`fragmented_ike`), vendor DB (`vendor`), anti-replay |
 
 ## Tests
 

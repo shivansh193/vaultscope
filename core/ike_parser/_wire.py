@@ -281,14 +281,16 @@ def _frame_chain(data: bytes, first_next_payload: int) -> list[Payload]:
     return payloads
 
 
-def _try_parse_sk_plaintext(sk_body: bytes, first_next_payload: int) -> list[Payload] | None:
-    """Best-effort: is ``sk_body`` an unencrypted inner payload chain?
+def _try_frame_chain(data: bytes, first_next_payload: int) -> list[Payload] | None:
+    """Best-effort: is ``data`` an unencrypted payload chain?
 
-    Synthetic fixtures and key-logged captures put readable payloads here.
-    Real ciphertext will (almost) never frame cleanly -> return None.
+    Synthetic fixtures and key-logged / tshark-decrypted captures put readable
+    payloads here (inside an IKEv2 SK payload, or the body of an "encrypted"
+    IKEv1 Quick Mode / Main Mode 5-6 message). Real ciphertext will (almost)
+    never frame cleanly -> return None.
     """
     try:
-        return _frame_chain(sk_body, first_next_payload)
+        return _frame_chain(data, first_next_payload)
     except WireFormatError:
         return None
 
@@ -319,11 +321,17 @@ def decode_message(raw: bytes) -> IkeMessage:
     if length and length > len(raw):
         msg.truncated = True
 
-    # IKEv1 Main Mode messages 5-6 (and all later phases) are encrypted under
-    # SKEYID_e: the payload area is ciphertext, not framable. Leave payloads
-    # empty rather than manufacturing garbage from it.
+    # IKEv1 Main Mode messages 5-6 and every Quick Mode message are encrypted
+    # under SKEYID_e. Best-effort: key-logged / tshark-decrypted captures (and
+    # synthetic fixtures) expose the plaintext payload chain here; genuine
+    # ciphertext will not frame cleanly, so mark the message encrypted and
+    # leave payloads empty rather than manufacturing garbage.
     if version == IKE_VERSION_1 and (flags & V1_FLAG_ENCRYPTION):
-        msg.encrypted = True
+        recovered = _try_frame_chain(body, next_payload)
+        if recovered is None:
+            msg.encrypted = True
+            return msg
+        msg.payloads = recovered
         return msg
 
     nxt = next_payload
@@ -340,7 +348,7 @@ def decode_message(raw: bytes) -> IkeMessage:
 
         if nxt == PAYLOAD_SK:
             sk = Payload(type=PAYLOAD_SK, critical=bool(crit_res & 0x80), raw=payload_body)
-            inner = _try_parse_sk_plaintext(payload_body, this_next)
+            inner = _try_frame_chain(payload_body, this_next)
             if inner is not None:
                 sk.sk_opaque = False
                 sk.inner = inner

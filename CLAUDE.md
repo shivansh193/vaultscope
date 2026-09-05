@@ -10,7 +10,7 @@ After every `git push`, review whether this file is still accurate and update it
 
 **Pipeline build in progress.** Environment, package skeleton, test tree and lint/test config are in place. Implemented so far:
 
-- **Stage 2 — IKE parser** (`core/ike_parser/`, Block A / P2-T1 + P2-T2): `parse_ikev2()` and `parse_ikev1()` reconstruct IKEv2 / IKEv1-phase-1 handshakes into `core.models.VPNSession` (fills the `ike` block). See `core/ike_parser/CLAUDE.md`.
+- **Stage 2 — IKE parser** (`core/ike_parser/`, Block A / P2-T1..T3): `parse_ikev2()` and `parse_ikev1()` reconstruct IKEv2 and IKEv1 (Main/Aggressive + Quick Mode) handshakes into `core.models.VPNSession` (fills the `ike` block). See `core/ike_parser/CLAUDE.md`.
 - **Stage 4c — rule engine** (`core/rules/`, Block B / P3-T1..T3): `evaluate_rules()` + `rules.yaml` + vendor remediation.
 - **Stage 5 — reports** (`reporting/`, Block B / P3-T4..T6): executive/technical reports, JSON/CEF export.
 
@@ -87,6 +87,7 @@ Python deps are pinned across three manifests: `requirements.txt` (runtime), `re
 
 ## Change log (newest first)
 
+- **P2-T3** IKEv1 Quick Mode — phase-2 (IPsec SA) cipher/integrity/D-H/encap-mode extraction; PFS from a KE payload or Group Description; QM values override the phase-1 crypto fields (the IPsec SA is what protects data). `_wire` best-effort frames the encrypted QM body for key-logged/decrypted captures. Also fixed a latent P2-T2 gap: a phase-1-only IKEv1 capture now reports `pfs_status="unknown"`, not the model default.
 - **P2-T2** IKEv1 / ISAKMP parser — `parse_ikev1()`, Main vs Aggressive Mode detection (ID-payload-in-message-1 signal, not message count), phase-1 crypto extraction. `core/ike_parser/ikev1.py`, `V1_*` constants + `canon_v1_*` in `_transforms.py`.
 - **P2-T1** IKEv2 parser — `parse_ikev2()`, SA_INIT + IKE_AUTH → `core.models.VPNSession`. Pure-`struct` RFC 7296 wire decoder (`_wire.py`), IANA canonicalisation (`_transforms.py`). Widened `core.models.IkeParams.auth_method` to also accept `DSS` / `ECDSA` / `None` (real IKE auth methods beyond the spec's 4-value enum).
 - **Env setup** — repo skeleton per spec §3.2, Python tooling, smoke tests.

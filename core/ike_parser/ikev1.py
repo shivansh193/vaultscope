@@ -1,8 +1,7 @@
-"""Stage 2 - IKEv1 / ISAKMP handshake reconstruction (P2-T2).
+"""Stage 2 - IKEv1 / ISAKMP handshake reconstruction (P2-T2, P2-T3).
 
-``parse_ikev1(source)`` turns an IKEv1 phase-1 exchange (Main Mode or
-Aggressive Mode) into a :class:`VPNSession`. Quick Mode / PFS extraction is
-P2-T3.
+``parse_ikev1(source)`` turns an IKEv1 exchange into a canonical
+:class:`core.models.VPNSession` (fills the ``ike`` block).
 
 Mode detection (spec Section 4, "IKEv1 Message Handling")
 --------------------------------------------------------
@@ -14,12 +13,26 @@ Message *count* is deliberately not used: retransmissions change it. The
 ISAKMP exchange-type byte (2 = Main, 4 = Aggressive) is the fallback when no
 SA-bearing message is in the capture.
 
-What it extracts
-----------------
+Phase 1 (Main / Aggressive Mode) -> IKE SA
+-----------------------------------------
 From the first proposal's first transform of the phase-1 SA payload:
 encryption, hash -> integrity + prf, auth method (PSK / RSA / DSS / XAUTH),
-D-H group, SA lifetime. Plus VENDOR ID hex, NAT-D presence -> nat_traversal.
-Encrypted Main Mode messages (5-6) are opaque and simply ignored.
+D-H group, SA lifetime. NAT-D presence -> nat_traversal.
+
+Phase 2 (Quick Mode) -> IPsec SA  (P2-T3)
+----------------------------------------
+Quick Mode is encrypted; readable only for key-logged / tshark-decrypted
+captures (and synthetic fixtures) -- ``_wire`` best-effort frames the body.
+When a QM SA is observed it *overrides* the phase-1 crypto fields, because the
+IPsec SA is what actually protects data and is what the Stage 4c rule engine
+should evaluate:
+
+  * ``encryption`` / ``integrity`` from the ESP transform id + Auth Algorithm
+  * ``dh_group`` from the QM Group Description (if PFS)
+  * ``mode`` (tunnel / transport) from the Encapsulation Mode attribute
+  * ``pfs_status`` = enabled if a KE payload or Group Description is present,
+    disabled if an observed QM negotiation has neither, ``unknown`` if no Quick
+    Mode was captured (never guessed -- spec Section 12 / rule R10).
 """
 
 from __future__ import annotations
@@ -32,6 +45,7 @@ from ._transforms import (
     EXCHANGE_V1_AGGRESSIVE,
     EXCHANGE_V1_IDENTITY_PROTECT,
     EXCHANGE_V1_NAMES,
+    EXCHANGE_V1_QUICK,
     V1_ATTR_AUTH_METHOD,
     V1_ATTR_ENCRYPTION,
     V1_ATTR_GROUP_DESC,
@@ -39,14 +53,27 @@ from ._transforms import (
     V1_ATTR_KEY_LENGTH,
     V1_ATTR_LIFE_DURATION,
     V1_ATTR_LIFE_TYPE,
+    V1_ENCAP_TRANSPORT,
+    V1_ENCAP_TUNNEL,
+    V1_ENCAP_UDP_TRANSPORT,
+    V1_ENCAP_UDP_TUNNEL,
     V1_LIFE_TYPE_SECONDS,
+    V1_P2_ATTR_AUTH_ALG,
+    V1_P2_ATTR_ENCAP_MODE,
+    V1_P2_ATTR_GROUP_DESC,
+    V1_P2_ATTR_KEY_LENGTH,
+    V1_P2_ATTR_LIFE_DURATION,
+    V1_P2_ATTR_LIFE_TYPE,
     V1_PAYLOAD_ID,
+    V1_PAYLOAD_KE,
     V1_PAYLOAD_NAT_D,
     V1_PAYLOAD_NAT_D_DRAFT,
     V1_PAYLOAD_SA,
     canon_dh_group,
     canon_v1_auth_method,
     canon_v1_encryption,
+    canon_v1_esp_encryption,
+    canon_v1_esp_integrity,
     canon_v1_integrity,
     canon_v1_prf,
 )
@@ -84,9 +111,11 @@ def _parse_v1_attributes(blob: bytes) -> dict[int, int]:
     return attrs
 
 
-def _first_transform_attrs(sa_body: bytes) -> dict[int, int]:
-    """Attributes of the first transform of the first proposal in a phase-1 SA
-    payload body (DOI + Situation + Proposal(s) -> Transform(s))."""
+def _first_transform(sa_body: bytes) -> tuple[int, int, dict[int, int]]:
+    """(proposal protocol-id, transform-id, attrs) for the first transform of
+    the first proposal in an ISAKMP SA payload body (DOI + Situation +
+    Proposal(s) -> Transform(s)). Works for phase 1 and phase 2 -- only the
+    caller knows how to read the transform-id / attribute numbers."""
     if len(sa_body) < 8:
         raise WireFormatError("IKEv1 SA payload too short for DOI + situation")
     # sa_body[0:4] = DOI, sa_body[4:8] = Situation (IPSEC DOI). Proposals follow.
@@ -98,6 +127,7 @@ def _first_transform_attrs(sa_body: bytes) -> dict[int, int]:
         raise WireFormatError("IKEv1 proposal length out of range")
     prop = sa_body[off + 4 : off + p_len]  # after the 4-byte generic header
     # prop: 1 num, 1 protocol-id, 1 spi-size, 1 #transforms, SPI, transforms
+    protocol_id = prop[1]
     spi_size = prop[2]
     toff = 4 + spi_size
     if toff + 8 > len(prop):
@@ -107,7 +137,8 @@ def _first_transform_attrs(sa_body: bytes) -> dict[int, int]:
         raise WireFormatError("IKEv1 transform length out of range")
     # transform body after 4-byte generic header: 1 num, 1 id, 2 reserved, attrs
     tbody = prop[toff + 4 : toff + t_len]
-    return _parse_v1_attributes(tbody[4:])
+    transform_id = tbody[1]
+    return protocol_id, transform_id, _parse_v1_attributes(tbody[4:])
 
 
 # --------------------------------------------------------------------------- #
@@ -151,6 +182,51 @@ def _apply_phase1_sa(ike: dict, attrs: dict[int, int]) -> None:
         ike["sa_lifetime_sec"] = life
 
 
+def _quick_mode_sa(messages: list[IkeMessage]):
+    """First Quick Mode (exchange type 32) message carrying a phase-2 SA
+    payload, plus whether that message also carries a KE payload."""
+    for m in messages:
+        if m.exchange_type != EXCHANGE_V1_QUICK:
+            continue
+        sa = next((p for p in m.payloads if p.type == V1_PAYLOAD_SA), None)
+        if sa is not None:
+            has_ke = any(p.type == V1_PAYLOAD_KE for p in m.payloads)
+            return sa, has_ke
+    return None, False
+
+
+def _apply_quick_mode(ike: dict, sa_body: bytes, has_ke: bool) -> None:
+    """Phase-2 (IPsec SA) parameters from a Quick Mode SA payload. For IKEv1
+    these *override* the phase-1 crypto fields: the IPsec SA is what actually
+    protects data, so that is what the rule engine should see."""
+    _proto, transform_id, attrs = _first_transform(sa_body)
+
+    ike["encryption"] = canon_v1_esp_encryption(transform_id, attrs.get(V1_P2_ATTR_KEY_LENGTH))
+    auth_alg = attrs.get(V1_P2_ATTR_AUTH_ALG)
+    if auth_alg is not None:
+        ike["integrity"] = canon_v1_esp_integrity(auth_alg)
+
+    group = attrs.get(V1_P2_ATTR_GROUP_DESC)
+    if group:
+        ike["dh_group"] = canon_dh_group(group)
+
+    encap = attrs.get(V1_P2_ATTR_ENCAP_MODE)
+    if encap in (V1_ENCAP_TRANSPORT, V1_ENCAP_UDP_TRANSPORT):
+        ike["mode"] = "transport"
+    elif encap in (V1_ENCAP_TUNNEL, V1_ENCAP_UDP_TUNNEL):
+        ike["mode"] = "tunnel"
+
+    life_type = attrs.get(V1_P2_ATTR_LIFE_TYPE)
+    life = attrs.get(V1_P2_ATTR_LIFE_DURATION)
+    if life is not None and life_type in (None, V1_LIFE_TYPE_SECONDS):
+        ike["sa_lifetime_sec"] = life
+
+    # PFS: a KE payload in Quick Mode (or a Group Description in the accepted
+    # proposal) means a fresh D-H exchange for this CHILD SA. Absence of both,
+    # on an observed QM negotiation, means PFS is off for this SA.
+    ike["pfs_status"] = "enabled" if (has_ke or group) else "disabled"
+
+
 def _analyse(messages: list[IkeMessage], ctx: dict) -> VPNSession:
     first = messages[0]
     icookie = first.initiator_spi
@@ -176,15 +252,31 @@ def _analyse(messages: list[IkeMessage], ctx: dict) -> VPNSession:
     # --- phase-1 crypto parameters ---------------------------------------
     sa_msg = initial
     if sa_msg is None:
+        # a Quick Mode SA payload uses phase-2 semantics; never read it as phase 1
         sa_msg = next(
-            (m for m in messages if any(p.type == V1_PAYLOAD_SA for p in m.payloads)), None
+            (
+                m
+                for m in messages
+                if m.exchange_type != EXCHANGE_V1_QUICK
+                and any(p.type == V1_PAYLOAD_SA for p in m.payloads)
+            ),
+            None,
         )
     if sa_msg is not None:
         sa = next(p for p in sa_msg.payloads if p.type == V1_PAYLOAD_SA)
         try:
-            _apply_phase1_sa(ike, _first_transform_attrs(sa.raw))
+            _apply_phase1_sa(ike, _first_transform(sa.raw)[2])
         except (WireFormatError, IndexError, struct.error):
             pass
+
+    # --- phase-2 (Quick Mode): PFS + IPsec SA cipher --------------------
+    qm_sa, qm_has_ke = _quick_mode_sa(messages)
+    if qm_sa is not None:
+        try:
+            _apply_quick_mode(ike, qm_sa.raw, qm_has_ke)
+        except (WireFormatError, IndexError, struct.error):
+            pass
+    ike.setdefault("pfs_status", "unknown")  # no Quick Mode observed -> undecidable
 
     # --- NAT-D -> NAT traversal -------------------------------------------
     for m in messages:
