@@ -17,7 +17,9 @@ After every `git push`, review whether this file is still accurate and update it
 
 - **Stage 6 — dashboard** (`frontend/`, Block B / P4-T1..T10): Next.js console — capture upload, session table, drilldown panel, D3 peer graph, aggregate charts, live WebSocket stream, export panel, capture comparison — plus the Docker Compose stack. **P4 is complete.**
 
-Not yet started: Stage 0 testbed, Stage 1 ingestion, Stage 3 flow features, Stage 4a/4b classifiers.
+- **Stage 0 — testbed + dataset** (`testbed/`, `scripts/generate_dataset.py`, Block B covering P1-T1..T4): real strongSwan tunnels in Docker across the config matrix, six traffic classes, ~300 labeled captures. See `testbed/CLAUDE.md` and `data/README.md`.
+
+Not yet started: Stage 1 ingestion (P1-T5..T7), P2-T4 parser edge cases, Stage 3 flow features, Stage 4a/4b classifiers.
 
 The design artifacts are `SIH26160_LLD.md` (Low-Level Design, SIH 2026 PS SIH26160) and `docs/VaultScope_Product_Spec.docx`. Read the LLD first; it is the single source of truth for scope and architecture, and its section numbering is shared vocabulary (e.g. "Stage 4b", "Section 3.6").
 
@@ -40,6 +42,8 @@ python scripts/generate_mock_data.py   # regenerate data/mock/*.json
 
 cd frontend && npm install && npm run dev   # console on :3000; see frontend/CLAUDE.md
 
+python scripts/generate_dataset.py --target 300 --duration 30 --parallel 4  # needs Docker
+
 docker compose up --build   # whole stack; console on http://localhost:3000
 ```
 
@@ -56,6 +60,7 @@ docker compose up --build   # whole stack; console on http://localhost:3000
 
 ## Subtree guides
 
+- `testbed/CLAUDE.md` — Stage 0 testbed: module map, the harness gotchas that cost real time, spec deviations.
 - `frontend/CLAUDE.md` — Stage 6 console: commands, stack divergences from the LLD, design tokens.
 - `core/ike_parser/CLAUDE.md` — Stage 2 IKE parser: module map, wire-format gotchas, `IkeParams` mapping, task status.
 
@@ -74,7 +79,7 @@ There are **two distinct AI problems of very different difficulty** — keep the
 
 Data flows Stage 0 → 6. Stages 4a/4b/4c run in parallel off the parsed session + extracted flow features, then converge at Stage 5.
 
-- **Stage 0 — Testbed** (offline, one-time): strongSwan peers in Docker Compose / Linux netns, scripted over the cartesian config matrix `{tunnel,transport} × {AES-128, AES-256, AES-GCM, AES-CBC+HMAC-SHA256} × {MODP1024, MODP2048, ECP256} × {PFS on/off} × {IPv4, IPv6}`. Traffic generators (sipp/RTP, ffmpeg, curl/headless Chrome, Postfix+swaks, ping) ride each tunnel. Output: one pcap per (config, traffic-type) + a metadata JSON label.
+- **Stage 0 — Testbed** (offline, one-time): strongSwan peers in Docker Compose / Linux netns, scripted over the cartesian config matrix `{tunnel,transport} × {AES-128, AES-256, AES-GCM, AES-CBC+HMAC-SHA256} × {MODP1024, MODP2048, ECP256} × {PFS on/off} × {IPv4, IPv6}`. Traffic generators (sipp/RTP, ffmpeg, curl+nginx, swaks over SMTP, ping, and a scripted chat substitution) ride each tunnel. Output: one pcap per (config, traffic-type) + a metadata JSON label.
 - **Stage 1 — Ingestion**: `pyshark` (tshark) for structured fields, `scapy` fallback for raw parsing. Filters IKE (`udp.port==500 or udp.port==4500`) and data-plane (`esp or ah`). Buckets into sessions keyed by `(init_SPI, resp_SPI)` for IKEv2 / `(cookie_i, cookie_r)` for IKEv1.
 - **Stage 2 — IKE parser** (deterministic): reassembles the handshake, extracts version/mode/encryption/integrity/prf/dh_group/pfs/lifetime/ip_version. IKEv1 vs IKEv2 parse different payload structures; PFS is inferred from a second DH exchange (`CREATE_CHILD_SA` / Quick Mode KE payload).
 - **Stage 3 — Flow feature extractor**: metadata-only per-flow stats (grouped by SPI + 5-tuple) via `nfstream` or a custom scapy aggregator. These vectors are the input to Stage 4b.
@@ -100,6 +105,7 @@ Python deps are pinned across three manifests: `requirements.txt` (runtime), `re
 
 ## Change log (newest first)
 
+- **P1-T1..T4** Stage 0 testbed and labeled dataset — `testbed/` (matrix, config generator, Docker peer harness, six traffic generators, ground-truth labels) and `scripts/generate_dataset.py`. Real strongSwan IKEv2 tunnels; the configured crypto round-trips back out of our own Stage 2 parser. Four gotchas worth remembering are in `testbed/CLAUDE.md` — chiefly that capturing after `establish()` silently yields crypto-less `esp-only` sessions, and that `tcpdump -i any` writes a linktype scapy cannot read.
 - **P4-T10** Docker Compose stack — `Dockerfile` (FastAPI + tshark + pango), `frontend/Dockerfile` (static export served by nginx, no Node at runtime), `docker-compose.yml`. nginx proxies `/api/` to the backend so the console is same-origin: no CORS, and `/api/ws/live` upgrades cleanly. `NEXT_PUBLIC_API_BASE=/api` is baked in at image build time — a static export has no server to read env at runtime. Analysed captures and reports live on the `vaultscope-data` volume.
 - **P4-T7..T9** Live stream, export panel, capture comparison — `/live` subscribes to `/ws/live` and prepends sessions as the backend finishes them; `/export` builds all four artifacts through `POST /report/{job_id}`; `/compare` diffs two captures. **`GET /sessions/diff` was reshaped**: `added` and `removed` are now full `VPNSession` records and `degraded` carries both the before and after record alongside the score and severity change, so a caller never has to re-fetch to find out what changed.
 - **P2-T3** IKEv1 Quick Mode — phase-2 (IPsec SA) cipher/integrity/D-H/encap-mode extraction; PFS from a KE payload or Group Description; QM values override the phase-1 crypto fields (the IPsec SA is what protects data). `_wire` best-effort frames the encrypted QM body for key-logged/decrypted captures. Also fixed a latent P2-T2 gap: a phase-1-only IKEv1 capture now reports `pfs_status="unknown"`, not the model default.

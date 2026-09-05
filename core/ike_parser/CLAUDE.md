@@ -76,6 +76,15 @@ There is **no `models.py` here** — one session shape lives in `core/models.py`
 | P2-T3 IKEv1 Quick Mode / PFS | ✅ done | KE/group → PFS, phase-2 cipher/integrity, encap → tunnel/transport (overrides phase 1) |
 | P2-T4 edge cases / VID fingerprint | ⬜ next | fragmented IKE (`fragmented_ike`), vendor DB (`vendor`), anti-replay |
 
+## Known gap found against real captures (P2-T4)
+
+A real strongSwan tunnel authenticating with **PSK** parses as
+`auth_method = "RSA"`. IKE_AUTH is encrypted in IKEv2 so the method genuinely
+is not observable, but `IkeParams.auth_method` defaults to `"RSA"`, which
+presents a guess as a fact. Rules **R06 and R13 test `eq PSK`**, so a PSK
+tunnel never trips them. The honest value is `None` when IKE_AUTH could not be
+read. Found against a testbed capture on 2026-09-06.
+
 ## Tests
 
 `tests/ike_parser/` — `_build.py` synthesises RFC-accurate messages (no testbed
