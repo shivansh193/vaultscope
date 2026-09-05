@@ -1,0 +1,77 @@
+{# Executive report: 1-2 pages, DG / CISO audience. Posture, top 3, plain English. #}
+<html lang="en">
+<head><meta charset="utf-8"><title>VaultScope Executive Summary</title>
+<style>{{ css }}</style></head>
+<body>
+
+<div class="masthead">
+  <h1>IPsec VPN Security Assessment</h1>
+  <div class="meta">
+    Executive summary &middot; {{ generated_at }}
+    {%- if capture_name %} &middot; capture: {{ capture_name }}{% endif %}
+  </div>
+</div>
+
+<div class="score-band">
+  <div class="score-number sev-{{ overall_severity }}">{{ summary.posture_score }}</div>
+  <div>
+    <div class="sev sev-{{ overall_severity }}">{{ overall_severity }}</div>
+    <div class="score-caption">
+      Posture score out of 100 across {{ summary.session_count }}
+      VPN session{{ '' if summary.session_count == 1 else 's' }}. Higher is safer.
+    </div>
+  </div>
+</div>
+
+<p>{{ verdict }}</p>
+
+<h2>Session breakdown</h2>
+<table>
+  <tr><th>Severity</th><th>Sessions</th><th>What it means</th></tr>
+  {% for sev, count in summary.severity_counts.items() if count %}
+  <tr>
+    <td class="sev sev-{{ sev }}">{{ sev }}</td>
+    <td>{{ count }}</td>
+    <td class="muted">{{ severity_plain_english[sev] }}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h2>Top findings</h2>
+{% if summary.top_findings %}
+  {% for entry in summary.top_findings %}
+  {% set f = entry.finding %}
+  <div class="finding">
+    <div class="finding-head">
+      <h3>{{ loop.index }}. {{ f.description }}</h3>
+      <span class="sev sev-{{ f.severity }}">{{ f.severity }}</span>
+    </div>
+    <div class="small muted">
+      Rule {{ f.rule_id }} &middot; {{ f.standard }}
+      {%- if f.cve %} &middot; {{ f.cve }}{% endif %}
+      &middot; affects {{ entry.session_count }} session{{ '' if entry.session_count == 1 else 's' }}
+    </div>
+    <p class="small">{{ plain_english[f.rule_id] }}</p>
+  </div>
+  {% endfor %}
+{% else %}
+  <p class="muted">No security findings. Every assessed session met the configured baseline.</p>
+{% endif %}
+
+<h2>Recommended action</h2>
+<ol>
+  {% for action in actions %}<li>{{ action }}</li>{% endfor %}
+</ol>
+
+<div class="disclosure">
+  <strong>Scope and confidence.</strong> Cryptographic parameters are read directly
+  from the IKE negotiation and are deterministic. Traffic types inside ESP are
+  inferred from encrypted-traffic metadata and are probabilistic &mdash; mean
+  classifier confidence for this capture is
+  {{ '%.0f'|format(summary.mean_ai_confidence * 100) }}%. Treat traffic-type
+  attribution as indicative, not authoritative. Full method and per-class accuracy
+  appear in the technical report.
+</div>
+
+</body>
+</html>
