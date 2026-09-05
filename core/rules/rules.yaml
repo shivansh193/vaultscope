@@ -152,3 +152,31 @@
   remediation: replay
   when:
     - {field: ike.anti_replay, op: eq, value: false}
+
+- id: R16
+  description: "Peer certificate has expired -- IKE authentication is trusting a dead cert"
+  severity: CRITICAL
+  cve: null
+  standard: "RFC 5280 s4.1.2.5"
+  remediation: cert
+  when:
+    - {field: ike.cert.expired, op: eq, value: true}
+
+- id: R17
+  description: "Dead Peer Detection not negotiated -- half-open SAs accumulate"
+  severity: LOW
+  cve: null
+  standard: "RFC 3706"
+  remediation: dpd
+  when:
+    - {field: ike.dpd_status, op: eq, value: disabled}
+
+- id: R18
+  description: "IKEv1 over IPv6 -- uncommon, frequently misconfigured"
+  severity: LOW
+  cve: null
+  standard: "Operational hygiene"
+  remediation: ikev6
+  when:
+    - {field: ike.version, op: eq, value: IKEv1}
+    - {field: ike.ip_version, op: eq, value: IPv6}
