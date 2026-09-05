@@ -1,0 +1,58 @@
+{
+  "model_version": "synthetic-bootstrap-2026-09-06-rf",
+  "algo": "rf",
+  "source": "synthetic-bootstrap",
+  "n_train": 756,
+  "n_test": 162,
+  "accuracy": 0.784,
+  "f1_macro": 0.7865,
+  "per_class": {
+    "Chat": {
+      "precision": 0.6897,
+      "recall": 0.7407,
+      "f1-score": 0.7143
+    },
+    "Email": {
+      "precision": 0.8571,
+      "recall": 0.8889,
+      "f1-score": 0.8727
+    },
+    "ICMP": {
+      "precision": 0.9583,
+      "recall": 0.8519,
+      "f1-score": 0.902
+    },
+    "Video": {
+      "precision": 0.88,
+      "recall": 0.8148,
+      "f1-score": 0.8462
+    },
+    "VoIP": {
+      "precision": 0.7308,
+      "recall": 0.7037,
+      "f1-score": 0.717
+    },
+    "Web": {
+      "precision": 0.6333,
+      "recall": 0.7037,
+      "f1-score": 0.6667
+    }
+  },
+  "feature_importance": {
+    "pkt_size_mean": 0.10759,
+    "pkt_size_std": 0.14536,
+    "pkt_size_p10": 0.05765,
+    "pkt_size_p90": 0.09053,
+    "iat_mean_ms": 0.06108,
+    "iat_std_ms": 0.06385,
+    "dir_ratio": 0.13031,
+    "burst_count": 0.03105,
+    "burst_gap_ratio": 0.03237,
+    "payload_size_var_burst": 0.11,
+    "flow_duration_sec": 0.03549,
+    "pkt_total": 0.06421,
+    "rate_pps": 0.07052
+  },
+  "generated_at": "2026-09-05T22:41:26.823107+00:00",
+  "note": "Bootstrap model trained on synthetic per-class flows; retrain on the Stage 0 pcap dataset with `python -m core.classifiers.train`."
+}

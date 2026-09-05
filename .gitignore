@@ -60,6 +60,13 @@ models/*.onnx
 models/*.png
 models/eval_metrics.json
 models/confusion_matrix.json
+# ...but Deliverable 2 (the trained Stage 4b model + its judge-facing metrics)
+# ships in the repo so the pipeline, reports and dashboard work out of the box.
+# `python -m core.classifiers.train` regenerates all four from the real dataset.
+!models/traffic_classifier.pkl
+!models/eval_metrics.json
+!models/confusion_matrix.json
+!models/feature_importance.png
 
 # generated reports
 reporting/out/
