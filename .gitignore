@@ -78,3 +78,8 @@ reporting/out/
 # Cypress run artifacts
 tests/e2e/screenshots/
 tests/e2e/videos/
+
+# Dataset captures are large and regenerable; the labels are the reviewable
+# ground truth and stay in git. See data/README.md.
+data/pcaps/*.pcap
+!data/pcaps/.gitkeep
