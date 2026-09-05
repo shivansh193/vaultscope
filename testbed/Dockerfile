@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libstrongswan-standard-plugins libstrongswan-extra-plugins \
         libcharon-extra-plugins \
         iproute2 iputils-ping tcpdump procps \
-        curl nginx ffmpeg sip-tester postfix swaks python3 \
+        curl nginx ffmpeg sip-tester swaks python3 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY generators /opt/generators
