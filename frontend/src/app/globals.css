@@ -29,13 +29,28 @@
   --severity-low: #30d158;
   --severity-safe: #48484a;
 
-  --traffic-voip: #64d2ff;
-  --traffic-video: #bf5af2;
-  --traffic-web: #0a84ff;
-  --traffic-email: #5e5ce6;
-  --traffic-icmp: #ac8e68;
-  --traffic-chat: #30d158;
-  --traffic-other: #8e8e93;
+  /*
+   * Traffic types are a categorical scale, not a status one, so they get their
+   * own fixed hue order -- assigned by slot, never cycled. Apple's system hues
+   * were tried first and failed colourblind separation on this surface
+   * (blue/purple ΔE 4.3 protan); these steps pass all six checks against
+   * #1c1c1e: lightness band, chroma floor, CVD separation, normal-vision
+   * floor, and 3:1 contrast.
+   */
+  --traffic-voip: #3987e5;
+  --traffic-video: #d95926;
+  --traffic-web: #199e70;
+  --traffic-email: #c98500;
+  --traffic-icmp: #d55181;
+  --traffic-chat: #008300;
+  --traffic-other: #9085e9;
+
+  /* Sequential ramp for the threat matrix: one hue, light to dark. */
+  --ramp-1: #184f95;
+  --ramp-2: #256abf;
+  --ramp-3: #3987e5;
+  --ramp-4: #6da7ec;
+  --ramp-5: #9ec5f4;
 
   --sidebar-width: 232px;
   --toolbar-height: 52px;

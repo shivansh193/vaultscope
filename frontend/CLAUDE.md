@@ -27,6 +27,7 @@ npm run lint
 - `src/lib/types.ts` — the TypeScript view of `core/models.py`. The Python model is the source of truth; mirror names and nesting exactly and never invent a field the backend does not send.
 - `src/lib/api.ts` — every backend call, typed. Nothing else calls `fetch`.
 - `src/lib/severity.ts` — severity ordering and the hue mapping.
+- `src/lib/charts.ts` — chart palettes and the pure shaping functions (`riskHistogram`, `trafficMix`, `threatMatrix`, `peerGraph`).
 - `src/components/` — shell (`Sidebar`, `Toolbar`, `BackendStatus`) and per-view components.
 - `src/test/factory.ts` — session builder for tests: canonical defaults, override only what the test is about.
 - `../tests/e2e/` — Cypress specs from spec Section 9, run against a real stack. See `tests/e2e/README.md`.
@@ -44,6 +45,8 @@ Apple HIG, dark-first. Tokens live at the top of `src/app/globals.css`: Apple's 
 - Severity is read by **hue**, never by a badge on every row — rows carry a 2px severity rail on the leading edge.
 - Monospace (`.mono`) is for values that must align: SPIs, transforms, IPs, config diffs. Not for labels.
 - Numbers in tables get `.tabular`.
+- **Two colour scales, never mixed in one chart.** Severity is a *status* scale (`src/lib/severity.ts`, Apple's system reds through green). Traffic type is a *categorical* scale (`src/lib/charts.ts`) with a fixed slot order — a capture missing VoIP must not repaint Web in VoIP's hue. Apple's own hues were tried for traffic and failed colourblind separation on this surface (blue/purple ΔE 4.3 protan); the current seven pass all six checks. Re-run the validator before changing any of them.
+- Charts ship a tooltip and a "Show the numbers" table. A chart nobody can read the values off is half a chart.
 - Motion answers a user action. No scroll-triggered entrances.
 
 <!-- BEGIN:nextjs-agent-rules -->

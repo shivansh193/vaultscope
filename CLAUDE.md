@@ -15,7 +15,7 @@ After every `git push`, review whether this file is still accurate and update it
 - **Stage 5 — reports** (`reporting/`, Block B / P3-T4..T6): executive/technical reports, JSON/CEF export.
 - **Backend API + pipeline** (`api/`, `core/pipeline.py`, `core/anomalies.py`, Block B / P3-T7..T10): every route in spec Section 11, SQLite persistence, cross-session anomaly detection, and `analyze_capture()` — the one seam onto Block A. P3 is complete.
 
-- **Stage 6 — dashboard** (`frontend/`, Block B / P4-T1..T4): Next.js console — capture upload, session table with sort/filter/paging, session drilldown panel. Peer graph, aggregate charts, live mode, export and diff land in P4-T5..T9.
+- **Stage 6 — dashboard** (`frontend/`, Block B / P4-T1..T6): Next.js console — capture upload, session table, drilldown panel, D3 peer graph, aggregate charts. Live mode, export and diff land in P4-T7..T9.
 
 Not yet started: Stage 0 testbed, Stage 1 ingestion, Stage 3 flow features, Stage 4a/4b classifiers.
 
@@ -98,6 +98,7 @@ Python deps are pinned across three manifests: `requirements.txt` (runtime), `re
 
 ## Change log (newest first)
 
+- **P4-T5..T6** Peer graph and aggregate dashboard — D3 force graph (`PeerGraph`) with peers as nodes coloured by their worst session, draggable, click-through to the filtered table or the session itself; Recharts risk histogram, traffic donut and a threat-matrix heatmap on `/overview`. Chart palettes live in `src/lib/charts.ts`: severity stays a status scale, traffic type gets its own validated categorical scale (Apple's hues failed CVD separation and were replaced). Every chart carries a tooltip and a table of the same numbers.
 - **P4-T2..T4** Upload, session table, drilldown — `UploadDrop` posts to `/ingest` and redirects; `SessionTable` sorts, filters and pages client-side over the capture's sessions; `SessionDrilldown` is a panel, not a route. `CaptureSpectrum` shows the whole capture as one strip of severity segments. Views are scoped to the current `job_id` so a table never mixes captures. Cypress specs from spec Section 9 live in `tests/e2e/` with generated pcap fixtures (`scripts/generate_e2e_fixtures.py`).
 - **P4-T1** Console scaffold — Next.js 16 App Router + TypeScript + Tailwind v4 in `frontend/`, `output: "export"` so nginx serves static files. `src/lib/types.ts` mirrors `core/models.py`, `src/lib/api.ts` is the only place that calls the backend, `src/app/globals.css` holds the Apple-dark design tokens. Vitest for units. See `frontend/CLAUDE.md`.
 - **P3-T7..T10** FastAPI backend, pipeline, SQLite store, anomalies — `api/main.py` (spec Section 11 routes + `/ws/live`), `api/store.py`, `core/pipeline.py`, `core/anomalies.py`. `analyze_capture()` probes each Block A stage independently and falls back to FIXTURE MODE off `data/mock/sessions.json`, stamping `capture_complete=False` / `model_version="fixture"`. Both `parse_ikev2_sessions` and `parse_ikev1_sessions` are called per capture — they already emit canonical `VPNSession`, so the pipeline adds Stage 3/4b/4c on top rather than reshaping the record. `pyproject.toml`: FastAPI argument-default markers exempted from ruff's B008.
