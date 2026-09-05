@@ -130,6 +130,14 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"accuracy {metrics['accuracy']}  macro-F1 {metrics['f1_macro']}")
     print(f"wrote {args.out}/traffic_classifier.pkl, eval_metrics.json, confusion_matrix.json")
+
+    # Stage 4a protocol/crypto fallback (P2-T9) -- cheap, ship it alongside
+    from .protocol import ProtocolClassifier
+
+    pc = ProtocolClassifier.train(n=2500, seed=args.seed, model_version="synthetic")
+    pc.save(args.out / "protocol_classifier.pkl")
+    print(f"wrote {args.out}/protocol_classifier.pkl")
+
     _ = rows_to_matrix  # re-exported for tests
     return 0
 
