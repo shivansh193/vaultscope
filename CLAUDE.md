@@ -15,7 +15,7 @@ After every `git push`, review whether this file is still accurate and update it
 - **Stage 5 — reports** (`reporting/`, Block B / P3-T4..T6): executive/technical reports, JSON/CEF export.
 - **Backend API + pipeline** (`api/`, `core/pipeline.py`, `core/anomalies.py`, Block B / P3-T7..T10): every route in spec Section 11, SQLite persistence, cross-session anomaly detection, and `analyze_capture()` — the one seam onto Block A. P3 is complete.
 
-- **Stage 6 — dashboard** (`frontend/`, Block B / P4-T1..T9): Next.js console — capture upload, session table, drilldown panel, D3 peer graph, aggregate charts, live WebSocket stream, export panel, capture comparison. Docker Compose integration is P4-T10.
+- **Stage 6 — dashboard** (`frontend/`, Block B / P4-T1..T10): Next.js console — capture upload, session table, drilldown panel, D3 peer graph, aggregate charts, live WebSocket stream, export panel, capture comparison — plus the Docker Compose stack. **P4 is complete.**
 
 Not yet started: Stage 0 testbed, Stage 1 ingestion, Stage 3 flow features, Stage 4a/4b classifiers.
 
@@ -39,6 +39,8 @@ uvicorn api.main:app --reload   # backend on :8000; Swagger UI at /docs
 python scripts/generate_mock_data.py   # regenerate data/mock/*.json
 
 cd frontend && npm install && npm run dev   # console on :3000; see frontend/CLAUDE.md
+
+docker compose up --build   # whole stack; console on http://localhost:3000
 ```
 
 `VAULTSCOPE_DB` overrides the SQLite path (default `vaultscope.sqlite` at the repo root) and `VAULTSCOPE_REPORT_DIR` the report output directory; the API tests set both to a `tmp_path`.
@@ -98,6 +100,7 @@ Python deps are pinned across three manifests: `requirements.txt` (runtime), `re
 
 ## Change log (newest first)
 
+- **P4-T10** Docker Compose stack — `Dockerfile` (FastAPI + tshark + pango), `frontend/Dockerfile` (static export served by nginx, no Node at runtime), `docker-compose.yml`. nginx proxies `/api/` to the backend so the console is same-origin: no CORS, and `/api/ws/live` upgrades cleanly. `NEXT_PUBLIC_API_BASE=/api` is baked in at image build time — a static export has no server to read env at runtime. Analysed captures and reports live on the `vaultscope-data` volume.
 - **P4-T7..T9** Live stream, export panel, capture comparison — `/live` subscribes to `/ws/live` and prepends sessions as the backend finishes them; `/export` builds all four artifacts through `POST /report/{job_id}`; `/compare` diffs two captures. **`GET /sessions/diff` was reshaped**: `added` and `removed` are now full `VPNSession` records and `degraded` carries both the before and after record alongside the score and severity change, so a caller never has to re-fetch to find out what changed.
 - **P2-T3** IKEv1 Quick Mode — phase-2 (IPsec SA) cipher/integrity/D-H/encap-mode extraction; PFS from a KE payload or Group Description; QM values override the phase-1 crypto fields (the IPsec SA is what protects data). `_wire` best-effort frames the encrypted QM body for key-logged/decrypted captures. Also fixed a latent P2-T2 gap: a phase-1-only IKEv1 capture now reports `pfs_status="unknown"`, not the model default.
 - **P4-T5..T6** Peer graph and aggregate dashboard — D3 force graph (`PeerGraph`) with peers as nodes coloured by their worst session, draggable, click-through to the filtered table or the session itself; Recharts risk histogram, traffic donut and a threat-matrix heatmap on `/overview`. Chart palettes live in `src/lib/charts.ts`: severity stays a status scale, traffic type gets its own validated categorical scale (Apple's hues failed CVD separation and were replaced). Every chart carries a tooltip and a table of the same numbers.

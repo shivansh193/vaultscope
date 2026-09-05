@@ -11,6 +11,7 @@ npm run dev     # http://localhost:3000, expects the backend on :8000
 npm run build   # static export into frontend/out/ (nginx serves this)
 npm test        # vitest, unit + component
 npm run e2e     # cypress; needs uvicorn on :8000 and next dev on :3000
+CYPRESS_apiBase=/api npm run e2e   # ...or against `docker compose up` on :3000
 npm run lint
 ```
 
@@ -19,7 +20,7 @@ npm run lint
 ## Stack decisions that diverge from the LLD
 
 - **Next.js App Router, not React Router.** The LLD says "React + React Router"; App Router covers the same routing need and is what `create-next-app` gives, so there is no router dependency.
-- **`output: "export"`.** The console is entirely client-side, so the build is static files and the frontend container is nginx alone — no Node runtime.
+- **`output: "export"`.** The console is entirely client-side, so the build is static files and the frontend container is nginx alone — no Node runtime. `NEXT_PUBLIC_API_BASE` is therefore baked in at image build time; a static export has no server to read env at runtime. In the container it is `/api`, so the console is same-origin with the backend and no request needs a CORS preflight.
 - **Session drilldown is a panel, not a `/session/[id]` route.** Session ids are only known at runtime, which a static export cannot enumerate. The panel also keeps the table in view while reading a session.
 
 ## Structure
