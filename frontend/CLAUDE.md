@@ -10,6 +10,7 @@ npm install
 npm run dev     # http://localhost:3000, expects the backend on :8000
 npm run build   # static export into frontend/out/ (nginx serves this)
 npm test        # vitest, unit + component
+npm run e2e     # cypress; needs uvicorn on :8000 and next dev on :3000
 npm run lint
 ```
 
@@ -27,6 +28,14 @@ npm run lint
 - `src/lib/api.ts` — every backend call, typed. Nothing else calls `fetch`.
 - `src/lib/severity.ts` — severity ordering and the hue mapping.
 - `src/components/` — shell (`Sidebar`, `Toolbar`, `BackendStatus`) and per-view components.
+- `src/test/factory.ts` — session builder for tests: canonical defaults, override only what the test is about.
+- `../tests/e2e/` — Cypress specs from spec Section 9, run against a real stack. See `tests/e2e/README.md`.
+
+## Behaviour worth knowing
+
+- **Views are scoped to the most recent ingest.** The database accumulates every capture ever uploaded; `useSessions()` filters by the current `job_id` so a table never mixes three captures. `useSessions({ allCaptures: true })` opts out — the compare view needs it.
+- **The table opens sorted worst-first.** Clicking the Risk header the first time re-asserts that order rather than reversing it; reversing on the first click would hide exactly what the user opened the capture to see.
+- **Data-`testid` and `data-field` attributes on rows are contract**, not decoration — the Cypress specs in the spec's commit map select on them.
 
 ## Design language
 
@@ -36,3 +45,13 @@ Apple HIG, dark-first. Tokens live at the top of `src/app/globals.css`: Apple's 
 - Monospace (`.mono`) is for values that must align: SPIs, transforms, IPs, config diffs. Not for labels.
 - Numbers in tables get `.tabular`.
 - Motion answers a user action. No scroll-triggered entrances.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->
