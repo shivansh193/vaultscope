@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from api import store
 from core import pipeline
 from core.anomalies import detect_anomalies
-from core.models import AnomalyEvent, VPNSession
+from core.models import AnomalyEvent, Severity, VPNSession
 from reporting import export, render
 
 VERSION = "1.0.0"
@@ -73,10 +73,27 @@ class ReportResponse(BaseModel):
     download_url: str
 
 
+class DegradedSession(BaseModel):
+    """A session both captures hold, whose assessment got worse.
+
+    Carries both whole records, not just the delta: the caller comparing two
+    captures is about to ask *what* changed, and making it re-fetch two
+    sessions to answer that is a round trip for nothing.
+    """
+
+    session_id: str
+    base: VPNSession
+    compare: VPNSession
+    base_score: int
+    compare_score: int
+    base_severity: Severity
+    compare_severity: Severity
+
+
 class DiffResponse(BaseModel):
-    added: list[str]
-    removed: list[str]
-    degraded: list[dict]
+    added: list[VPNSession]
+    removed: list[VPNSession]
+    degraded: list[DegradedSession]
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -150,19 +167,21 @@ def diff(base_job: str, compare_job: str) -> DiffResponse:
     compare = {s.session_id: s for s in store.list_sessions(job_id=compare_job, limit=1000)}
 
     degraded = [
-        {
-            "session_id": sid,
-            "base_score": base[sid].security_assessment.risk_score,
-            "compare_score": compare[sid].security_assessment.risk_score,
-            "base_severity": base[sid].security_assessment.overall_severity,
-            "compare_severity": compare[sid].security_assessment.overall_severity,
-        }
-        for sid in base.keys() & compare.keys()
+        DegradedSession(
+            session_id=sid,
+            base=base[sid],
+            compare=compare[sid],
+            base_score=base[sid].security_assessment.risk_score,
+            compare_score=compare[sid].security_assessment.risk_score,
+            base_severity=base[sid].security_assessment.overall_severity,
+            compare_severity=compare[sid].security_assessment.overall_severity,
+        )
+        for sid in sorted(base.keys() & compare.keys())
         if compare[sid].security_assessment.risk_score < base[sid].security_assessment.risk_score
     ]
     return DiffResponse(
-        added=sorted(compare.keys() - base.keys()),
-        removed=sorted(base.keys() - compare.keys()),
+        added=[compare[sid] for sid in sorted(compare.keys() - base.keys())],
+        removed=[base[sid] for sid in sorted(base.keys() - compare.keys())],
         degraded=degraded,
     )
 

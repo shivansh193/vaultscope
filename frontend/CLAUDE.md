@@ -27,6 +27,8 @@ npm run lint
 - `src/lib/types.ts` — the TypeScript view of `core/models.py`. The Python model is the source of truth; mirror names and nesting exactly and never invent a field the backend does not send.
 - `src/lib/api.ts` — every backend call, typed. Nothing else calls `fetch`.
 - `src/lib/severity.ts` — severity ordering and the hue mapping.
+- `src/lib/useLiveSessions.ts` — the `/ws/live` socket. Newest first, deduplicated by `session_id`.
+- `src/lib/job.ts` — the captures this browser has analysed, in `sessionStorage`. Export and Compare read their options from it.
 - `src/lib/charts.ts` — chart palettes and the pure shaping functions (`riskHistogram`, `trafficMix`, `threatMatrix`, `peerGraph`).
 - `src/components/` — shell (`Sidebar`, `Toolbar`, `BackendStatus`) and per-view components.
 - `src/test/factory.ts` — session builder for tests: canonical defaults, override only what the test is about.
