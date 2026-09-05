@@ -1,0 +1,154 @@
+# VaultScope security rule table (product spec, Stage 4c).
+#
+# Data, not code -- add or retune a rule here, never in engine.py.
+#
+# Each rule fires when EVERY clause in `when` matches. A clause is
+# {field, op, value}; `field` is a dotted path into a VPNSession.
+# Ops: eq (==), in (member of list), gt (>), regex (case-insensitive search).
+#
+# `remediation` names a template group in remediation.yaml, so several rules
+# that call for the same config change share one set of vendor templates.
+
+- id: R01
+  description: "Broken or absent encryption algorithm (DES / NULL)"
+  severity: CRITICAL
+  cve: null
+  standard: "NIST SP 800-77, RFC 8247"
+  remediation: enc_weak
+  # Anchored so 3DES-CBC falls to R02 instead of matching here.
+  when:
+    - {field: ike.encryption, op: regex, value: '^(des|null)\b'}
+
+- id: R02
+  description: "3DES-CBC encryption (64-bit block, SWEET32 birthday bound)"
+  severity: HIGH
+  cve: "CVE-2016-2183"
+  standard: "RFC 8247"
+  remediation: enc_weak
+  when:
+    - {field: ike.encryption, op: regex, value: '^3des'}
+
+- id: R03
+  description: "Diffie-Hellman Group 1 (768-bit MODP) -- trivially breakable"
+  severity: CRITICAL
+  cve: null
+  standard: "RFC 8247 s4, LOGJAM"
+  remediation: dh_weak
+  when:
+    - {field: ike.dh_group, op: regex, value: 'modp768|\bgroup ?1\b'}
+
+- id: R04
+  description: "Diffie-Hellman Group 2 (1024-bit MODP) -- precomputation feasible for a state actor"
+  severity: CRITICAL
+  cve: null
+  standard: "RFC 8247 s4, LOGJAM"
+  remediation: dh_weak
+  when:
+    - {field: ike.dh_group, op: regex, value: 'modp1024|\bgroup ?2\b'}
+
+- id: R05
+  description: "Diffie-Hellman Group 5 (1536-bit MODP) -- below current guidance"
+  severity: HIGH
+  cve: null
+  standard: "RFC 8247 s4"
+  remediation: dh_weak
+  when:
+    - {field: ike.dh_group, op: regex, value: 'modp1536|\bgroup ?5\b'}
+
+- id: R06
+  description: "IKEv1 Aggressive Mode with PSK -- PSK hash exposed in cleartext"
+  severity: CRITICAL
+  cve: null
+  standard: "PSK hash exposed in cleartext"
+  remediation: ikev1
+  when:
+    - {field: ike.version, op: eq, value: IKEv1}
+    - {field: ike.aggressive_mode, op: eq, value: true}
+    - {field: ike.auth_method, op: eq, value: PSK}
+
+- id: R07
+  description: "IKEv1 in use -- deprecated by RFC 9395"
+  severity: HIGH
+  cve: null
+  standard: "RFC 9395"
+  remediation: ikev1
+  when:
+    - {field: ike.version, op: eq, value: IKEv1}
+
+- id: R08
+  description: "MD5-HMAC integrity -- collision-broken (SLOTH)"
+  severity: CRITICAL
+  cve: null
+  standard: "RFC 8247, SLOTH"
+  remediation: integ_weak
+  when:
+    - {field: ike.integrity, op: regex, value: 'md5'}
+
+- id: R09
+  description: "SHA1-HMAC integrity -- deprecated"
+  severity: HIGH
+  cve: null
+  standard: "RFC 8247 s3"
+  remediation: integ_weak
+  # `sha-?1` alone would also match SHA-1 inside nothing else, but the trailing
+  # boundary keeps SHA-256 / SHA-512 out.
+  when:
+    - {field: ike.integrity, op: regex, value: 'sha-?1(\b|$)'}
+
+- id: R10
+  description: "Perfect Forward Secrecy disabled -- one key compromise exposes all past traffic"
+  severity: MEDIUM
+  cve: null
+  standard: "CNSSP-15"
+  remediation: pfs_off
+  # Deliberately `eq disabled`, not `!= enabled`: an unknown PFS state is a gap
+  # in the capture, not a proven weakness, and must not be penalised.
+  when:
+    - {field: ike.pfs_status, op: eq, value: disabled}
+
+- id: R11
+  description: "SA lifetime exceeds 24 hours"
+  severity: MEDIUM
+  cve: null
+  standard: "NIST SP 800-77 s5"
+  remediation: lifetime
+  when:
+    - {field: ike.sa_lifetime_sec, op: gt, value: 86400}
+
+- id: R12
+  description: "SA lifetime exceeds 8 hours"
+  severity: LOW
+  cve: null
+  standard: "Operational hygiene"
+  remediation: lifetime
+  when:
+    - {field: ike.sa_lifetime_sec, op: gt, value: 28800}
+
+- id: R13
+  description: "PSK authentication combined with a weak DH group -- offline PSK cracking risk"
+  severity: HIGH
+  cve: null
+  standard: "Offline PSK crack risk"
+  remediation: dh_weak
+  when:
+    - {field: ike.auth_method, op: eq, value: PSK}
+    - {field: ike.dh_group, op: regex, value: 'modp(768|1024|1536)'}
+
+- id: R14
+  description: "Fragmented IKE on Cisco ASA -- remote code execution exposure"
+  severity: HIGH
+  cve: "CVE-2016-1287"
+  standard: "CVE-2016-1287"
+  remediation: frag
+  when:
+    - {field: ike.fragmented_ike, op: eq, value: true}
+    - {field: ike.vendor, op: regex, value: 'cisco'}
+
+- id: R15
+  description: "Anti-replay protection disabled (ESP/AH sequence numbers unused)"
+  severity: HIGH
+  cve: null
+  standard: "RFC 4303 s3.4.3"
+  remediation: replay
+  when:
+    - {field: ike.anti_replay, op: eq, value: false}
