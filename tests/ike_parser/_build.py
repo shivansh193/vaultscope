@@ -214,8 +214,13 @@ def _sa_child_esp(*, dh: int | None = None, encr: int = 20, keylen: int | None =
     return _proposal(1, PROTOCOL_ESP, tfs, spi=bytes.fromhex("0a0b0c0d"))
 
 
+# D-H public-value sizes (bytes) -- so a fixture KE payload is the right length
+# for its group, the way a real capture is (Stage 4a fingerprints on this).
+_DH_KEY_BYTES = {1: 96, 2: 128, 5: 192, 14: 256, 15: 384, 19: 64, 20: 96, 21: 132, 31: 32}
+
+
 def _ke(group: int) -> bytes:
-    return struct.pack(">HH", group, 0) + b"\xab" * 32
+    return struct.pack(">HH", group, 0) + b"\xab" * _DH_KEY_BYTES.get(group, 32)
 
 
 def _nonce() -> bytes:
