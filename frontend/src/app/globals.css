@@ -1,0 +1,132 @@
+@import "tailwindcss";
+
+/*
+ * VaultScope console tokens.
+ *
+ * The palette is Apple's dark system semantic set rather than an invented one:
+ * a security console is read in a dim room for long stretches, and the risk
+ * hues have to stay the loudest thing on screen. Severity is carried by hue in
+ * five steps, never by a single accent.
+ */
+
+:root {
+  --ground: #000000;
+  --surface: #1c1c1e;
+  --surface-raised: #2c2c2e;
+  --surface-control: #3a3a3c;
+  --separator: #38383a;
+
+  --label: #f5f5f7;
+  --label-secondary: #98989d;
+  --label-tertiary: #636366;
+
+  --accent: #0a84ff;
+  --accent-pressed: #409cff;
+
+  --severity-critical: #ff453a;
+  --severity-high: #ff9f0a;
+  --severity-medium: #ffd60a;
+  --severity-low: #30d158;
+  --severity-safe: #48484a;
+
+  --traffic-voip: #64d2ff;
+  --traffic-video: #bf5af2;
+  --traffic-web: #0a84ff;
+  --traffic-email: #5e5ce6;
+  --traffic-icmp: #ac8e68;
+  --traffic-chat: #30d158;
+  --traffic-other: #8e8e93;
+
+  --sidebar-width: 232px;
+  --toolbar-height: 52px;
+
+  /* Apple's type scale, in the roles this console actually uses. */
+  --text-large-title: 2.125rem;
+  --text-title-1: 1.75rem;
+  --text-title-3: 1.25rem;
+  --text-headline: 1.0625rem;
+  --text-body: 1.0625rem;
+  --text-subhead: 0.9375rem;
+  --text-footnote: 0.8125rem;
+  --text-caption: 0.75rem;
+}
+
+@theme inline {
+  --color-ground: var(--ground);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-control: var(--surface-control);
+  --color-separator: var(--separator);
+  --color-label: var(--label);
+  --color-label-secondary: var(--label-secondary);
+  --color-label-tertiary: var(--label-tertiary);
+  --color-accent: var(--accent);
+  --color-critical: var(--severity-critical);
+  --color-high: var(--severity-high);
+  --color-medium: var(--severity-medium);
+  --color-low: var(--severity-low);
+  --color-safe: var(--severity-safe);
+
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", Inter,
+    system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--ground);
+  color: var(--label);
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: 1.47;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Cryptographic values are compared column-wise; they need aligned figures. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-ligatures: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+/* macOS-style overlay scrollbars: present when used, invisible when not. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--surface-control);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--label-tertiary);
+  background-clip: content-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
