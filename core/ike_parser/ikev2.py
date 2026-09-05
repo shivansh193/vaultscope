@@ -1,8 +1,9 @@
 """Stage 2 - IKEv2 handshake reconstruction (P2-T1).
 
-``parse_ikev2(source)`` turns an IKEv2 exchange into a :class:`VPNSession`:
+``parse_ikev2(source)`` fills the ``ike`` block of a canonical
+:class:`core.models.VPNSession`:
 
-    >>> parse_ikev2("capture.pcap").encryption
+    >>> parse_ikev2("capture.pcap").ike.encryption
     'AES-256-GCM'
 
 ``source`` may be
@@ -33,6 +34,8 @@ import struct
 from collections import OrderedDict
 from collections.abc import Iterable
 
+from core.models import IkeParams, VPNSession
+
 from ._transforms import (
     EXCHANGE_CREATE_CHILD_SA,
     EXCHANGE_IKE_AUTH,
@@ -45,7 +48,6 @@ from ._transforms import (
     PAYLOAD_KE,
     PAYLOAD_NOTIFY,
     PAYLOAD_SA,
-    PAYLOAD_VENDOR_ID,
     PROTOCOL_AH,
     PROTOCOL_ESP,
     TRANSFORM_TYPE_DH,
@@ -60,7 +62,6 @@ from ._transforms import (
     is_aead_encr,
 )
 from ._wire import IkeMessage, Proposal, WireFormatError, decode_message
-from .models import VPNSession
 
 _ZERO_SPI = b"\x00" * 8
 _NON_ESP_MARKER = b"\x00\x00\x00\x00"
@@ -214,7 +215,8 @@ def _fill_ip_ctx(ctx: dict, pmsgs: list[_PcapMessage]) -> dict:
 # --------------------------------------------------------------------------- #
 # analysis                                                                     #
 # --------------------------------------------------------------------------- #
-def _apply_ike_proposal(session: VPNSession, prop: Proposal) -> None:
+def _apply_ike_proposal(ike: dict, prop: Proposal) -> None:
+    """Write the accepted ENCR/INTEG/PRF/D-H transforms into the ``ike`` accumulator."""
     encr = prop.first(TRANSFORM_TYPE_ENCR)
     integ = prop.first(TRANSFORM_TYPE_INTEG)
     prf = prop.first(TRANSFORM_TYPE_PRF)
@@ -222,12 +224,14 @@ def _apply_ike_proposal(session: VPNSession, prop: Proposal) -> None:
 
     aead = encr is not None and is_aead_encr(encr.id)
     if encr is not None:
-        session.encryption = canon_encryption(encr.id, encr.key_length)
-    session.integrity = canon_integrity(integ.id if integ is not None else None, aead=aead)
+        ike["encryption"] = canon_encryption(encr.id, encr.key_length)
+    integ_str = canon_integrity(integ.id if integ is not None else None, aead=aead)
+    if integ_str is not None:
+        ike["integrity"] = integ_str
     if prf is not None:
-        session.prf = canon_prf(prf.id)
+        ike["prf"] = canon_prf(prf.id)
     if dh is not None and dh.id != 0:
-        session.dh_group = canon_dh_group(dh.id)
+        ike["dh_group"] = canon_dh_group(dh.id)
 
 
 def _notify_types(msg: IkeMessage) -> list[int]:
@@ -256,14 +260,13 @@ def _child_sa_payload(msg: IkeMessage):
 def _analyse(messages: list[IkeMessage], ctx: dict) -> VPNSession:
     init_spi = messages[0].initiator_spi
     resp_spi = next((m.responder_spi for m in messages if m.responder_spi != _ZERO_SPI), _ZERO_SPI)
-    session = VPNSession(
-        session_id=f"{init_spi.hex()}-{resp_spi.hex()}",
-        ike_version="IKEv2",
-        ip_version=ctx.get("ip_version"),
-        initiator_ip=ctx.get("initiator_ip"),
-        responder_ip=ctx.get("responder_ip"),
-        nat_traversal=bool(ctx.get("nat_traversal", False)),
-    )
+
+    # Accumulate only what is actually observed; unset crypto fields fall to the
+    # core.models.IkeParams defaults (a known gap when capture_complete is False).
+    ike: dict = {"version": "IKEv2", "mode": "tunnel", "aggressive_mode": False}
+    if ctx.get("ip_version"):
+        ike["ip_version"] = ctx["ip_version"]
+    ike["nat_traversal"] = bool(ctx.get("nat_traversal", False))
 
     saw_sa_init = False
     saw_sa_init_response = False
@@ -271,13 +274,6 @@ def _analyse(messages: list[IkeMessage], ctx: dict) -> VPNSession:
     child_negotiations: list[dict] = []
 
     for msg in messages:
-        for p in msg.all_payloads():
-            if p.type == PAYLOAD_VENDOR_ID:
-                session.vendor_ids.append(p.raw.hex())
-        for nt in _notify_types(msg):
-            if nt not in session.notify_types:
-                session.notify_types.append(nt)
-
         et = msg.exchange_type
         notifies = set(_notify_types(msg))
 
@@ -286,30 +282,27 @@ def _analyse(messages: list[IkeMessage], ctx: dict) -> VPNSession:
             sa = msg.first(PAYLOAD_SA)
             if sa is not None and sa.proposals:
                 if msg.is_response:
-                    _apply_ike_proposal(session, sa.proposals[0])
+                    _apply_ike_proposal(ike, sa.proposals[0])
                     proposal_applied_from_response = True
                     saw_sa_init_response = True
                 elif not proposal_applied_from_response:
-                    _apply_ike_proposal(session, sa.proposals[0])
+                    _apply_ike_proposal(ike, sa.proposals[0])
             ke = msg.first(PAYLOAD_KE)
-            if ke is not None and ke.dh_group is not None and session.dh_group is None:
-                session.dh_group = canon_dh_group(ke.dh_group)
-            if notifies & {
-                NOTIFY_NAT_DETECTION_SOURCE_IP,
-                NOTIFY_NAT_DETECTION_DESTINATION_IP,
-            }:
+            if ke is not None and ke.dh_group is not None and "dh_group" not in ike:
+                ike["dh_group"] = canon_dh_group(ke.dh_group)
+            if notifies & {NOTIFY_NAT_DETECTION_SOURCE_IP, NOTIFY_NAT_DETECTION_DESTINATION_IP}:
                 # capability signal; real NAT is confirmed by the port-4500 switch
-                session.nat_traversal = session.nat_traversal or ctx.get("nat_traversal", False)
+                ike["nat_traversal"] = ike["nat_traversal"] or bool(ctx.get("nat_traversal", False))
 
         elif et == EXCHANGE_IKE_AUTH:
             auth = msg.first(PAYLOAD_AUTH)
             eap = bool(msg.find(PAYLOAD_EAP))
             if auth is not None or eap:
-                session.auth_method = canon_auth_method(
-                    auth.auth_method if auth is not None else None, eap=eap
-                )
+                am = canon_auth_method(auth.auth_method if auth is not None else None, eap=eap)
+                if am is not None:
+                    ike["auth_method"] = am
             if NOTIFY_USE_TRANSPORT_MODE in notifies:
-                session.mode = "transport"
+                ike["mode"] = "transport"
             child = _child_sa_payload(msg)
             if child is not None:
                 child_negotiations.append(
@@ -331,9 +324,8 @@ def _analyse(messages: list[IkeMessage], ctx: dict) -> VPNSession:
                     }
                 )
 
-    session.capture_complete = saw_sa_init_response or (
-        saw_sa_init and session.encryption is not None
-    )
+    capture_complete = saw_sa_init_response or (saw_sa_init and "encryption" in ike)
+    ike["capture_complete"] = capture_complete
 
     # PFS resolution -- conservative, mirrors spec Section 4 ("CREATE_CHILD_SA:
     # detect KE payload -> PFS enabled; absence of KE -> PFS disabled") and the
@@ -344,15 +336,20 @@ def _analyse(messages: list[IkeMessage], ctx: dict) -> VPNSession:
     #              a complete capture's IKE_AUTH child SA proposal had no D-H
     #   unknown  : no child negotiation seen, or only an incomplete IKE_AUTH one
     if any(c["has_ke"] or c["dh_ok"] for c in child_negotiations):
-        session.pfs_status = "enabled"
+        ike["pfs_status"] = "enabled"
     elif any(c["source"] == "create_child_sa" for c in child_negotiations):
-        session.pfs_status = "disabled"
-    elif session.capture_complete and any(c["source"] == "ike_auth" for c in child_negotiations):
-        session.pfs_status = "disabled"
+        ike["pfs_status"] = "disabled"
+    elif capture_complete and any(c["source"] == "ike_auth" for c in child_negotiations):
+        ike["pfs_status"] = "disabled"
     else:
-        session.pfs_status = "unknown"
+        ike["pfs_status"] = "unknown"
 
-    return session
+    return VPNSession(
+        session_id=f"{init_spi.hex()}-{resp_spi.hex()}",
+        initiator_ip=ctx.get("initiator_ip") or "",
+        responder_ip=ctx.get("responder_ip") or "",
+        ike=IkeParams(**ike),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -372,15 +369,19 @@ def parse_ikev2_sessions(source) -> list[VPNSession]:
     messages = [m for m in messages if m.is_ikev2]
     if not messages:
         if ctx.get("saw_esp"):
-            return [
-                VPNSession(
-                    session_id="esp-only",
-                    ike_version="IKEv2",
-                    ip_version=ctx.get("ip_version"),
-                    pfs_status="unknown",
-                    capture_complete=False,
-                )
-            ]
+            ike = dict(
+                version="IKEv2",
+                pfs_status="unknown",
+                capture_complete=False,
+                auth_method=None,
+                encryption="unknown",
+                integrity="unknown",
+                prf="unknown",
+                dh_group="unknown",
+            )
+            if ctx.get("ip_version"):
+                ike["ip_version"] = ctx["ip_version"]
+            return [VPNSession(session_id="esp-only", ike=IkeParams(**ike))]
         return []
     return [_analyse(msgs, ctx) for msgs in _bucket(messages).values()]
 

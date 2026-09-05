@@ -126,7 +126,7 @@ _INTEG_NAMES = {
 
 def canon_integrity(transform_id: int | None, *, aead: bool) -> str | None:
     if aead:
-        return "implicit (AEAD)"
+        return "implicit"  # matches core.models.IkeParams default for AEAD suites
     if transform_id is None:
         return None
     return _INTEG_NAMES.get(transform_id, f"INTEG_{transform_id}")
