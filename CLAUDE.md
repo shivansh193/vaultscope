@@ -13,8 +13,9 @@ After every `git push`, review whether this file is still accurate and update it
 - **Stage 2 — IKE parser** (`core/ike_parser/`, Block A / P2-T1 + P2-T2): `parse_ikev2()` and `parse_ikev1()` reconstruct IKEv2 / IKEv1-phase-1 handshakes into `core.models.VPNSession` (fills the `ike` block). See `core/ike_parser/CLAUDE.md`.
 - **Stage 4c — rule engine** (`core/rules/`, Block B / P3-T1..T3): `evaluate_rules()` + `rules.yaml` + vendor remediation.
 - **Stage 5 — reports** (`reporting/`, Block B / P3-T4..T6): executive/technical reports, JSON/CEF export.
+- **Backend API + pipeline** (`api/`, `core/pipeline.py`, `core/anomalies.py`, Block B / P3-T7..T10): every route in spec Section 11, SQLite persistence, cross-session anomaly detection, and `analyze_capture()` — the one seam onto Block A. P3 is complete.
 
-Not yet started: Stage 0 testbed, Stage 1 ingestion, Stage 3 flow features, Stage 4a/4b classifiers, Stage 6 dashboard, the FastAPI app.
+Not yet started: Stage 0 testbed, Stage 1 ingestion, Stage 3 flow features, Stage 4a/4b classifiers, Stage 6 dashboard (P4).
 
 The design artifacts are `SIH26160_LLD.md` (Low-Level Design, SIH 2026 PS SIH26160) and `docs/VaultScope_Product_Spec.docx`. Read the LLD first; it is the single source of truth for scope and architecture, and its section numbering is shared vocabulary (e.g. "Stage 4b", "Section 3.6").
 
@@ -31,7 +32,12 @@ pytest                      # whole suite from repo root
 pytest tests/ike_parser     # one slice
 pytest -m "not slow"        # skip tests needing the full dataset / trained model
 ruff check . && ruff format --check .
+
+uvicorn api.main:app --reload   # backend on :8000; Swagger UI at /docs
+python scripts/generate_mock_data.py   # regenerate data/mock/*.json
 ```
+
+`VAULTSCOPE_DB` overrides the SQLite path (default `vaultscope.sqlite` at the repo root) and `VAULTSCOPE_REPORT_DIR` the report output directory; the API tests set both to a `tmp_path`.
 
 `pyproject.toml` sets `pythonpath = ["."]`, so `import core.ike_parser` works with no install step. `tests/test_environment.py` is the environment smoke test — it asserts the directory skeleton, the importable dependency set, and `tshark` on PATH. Keep its skeleton list current when directories are added.
 
@@ -87,6 +93,7 @@ Python deps are pinned across three manifests: `requirements.txt` (runtime), `re
 
 ## Change log (newest first)
 
+- **P3-T7..T10** FastAPI backend, pipeline, SQLite store, anomalies — `api/main.py` (spec Section 11 routes + `/ws/live`), `api/store.py`, `core/pipeline.py`, `core/anomalies.py`. `analyze_capture()` probes each Block A stage independently and falls back to FIXTURE MODE off `data/mock/sessions.json`, stamping `capture_complete=False` / `model_version="fixture"`. Both `parse_ikev2_sessions` and `parse_ikev1_sessions` are called per capture — they already emit canonical `VPNSession`, so the pipeline adds Stage 3/4b/4c on top rather than reshaping the record. `pyproject.toml`: FastAPI argument-default markers exempted from ruff's B008.
 - **P2-T2** IKEv1 / ISAKMP parser — `parse_ikev1()`, Main vs Aggressive Mode detection (ID-payload-in-message-1 signal, not message count), phase-1 crypto extraction. `core/ike_parser/ikev1.py`, `V1_*` constants + `canon_v1_*` in `_transforms.py`.
 - **P2-T1** IKEv2 parser — `parse_ikev2()`, SA_INIT + IKE_AUTH → `core.models.VPNSession`. Pure-`struct` RFC 7296 wire decoder (`_wire.py`), IANA canonicalisation (`_transforms.py`). Widened `core.models.IkeParams.auth_method` to also accept `DSS` / `ECDSA` / `None` (real IKE auth methods beyond the spec's 4-value enum).
 - **Env setup** — repo skeleton per spec §3.2, Python tooling, smoke tests.

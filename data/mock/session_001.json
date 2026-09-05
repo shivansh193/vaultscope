@@ -1,0 +1,189 @@
+{
+  "session_id": "sess-001",
+  "capture_source": "pcap_upload",
+  "capture_file": "lab_capture.pcap",
+  "timestamp": "2026-09-05T10:00:00Z",
+  "initiator_ip": "10.10.1.5",
+  "responder_ip": "203.0.113.9",
+  "ike": {
+    "version": "IKEv1",
+    "mode": "tunnel",
+    "aggressive_mode": true,
+    "encryption": "3DES-CBC",
+    "integrity": "HMAC-SHA1",
+    "prf": "PRF_HMAC_SHA2_256",
+    "dh_group": "MODP1024",
+    "pfs_status": "disabled",
+    "auth_method": "PSK",
+    "ip_version": "IPv4",
+    "sa_lifetime_sec": 90000,
+    "vendor": "Cisco ASA 9.8",
+    "nat_traversal": false,
+    "fragmented_ike": false,
+    "capture_complete": true,
+    "anti_replay": true
+  },
+  "flow_features": {
+    "pkt_size_mean": 172.0,
+    "pkt_size_std": 11.0,
+    "pkt_size_p10": 0.0,
+    "pkt_size_p90": 0.0,
+    "iat_mean_ms": 20.0,
+    "iat_std_ms": 3.0,
+    "dir_ratio": 1.02,
+    "burst_count": 2,
+    "burst_gap_ratio": 0.0,
+    "payload_size_var_burst": 0.0,
+    "flow_duration_sec": 182.0,
+    "pkt_total": 9100,
+    "rate_pps": 50.0
+  },
+  "traffic_prediction": {
+    "predicted_type": "VoIP",
+    "confidence": 0.91,
+    "model_version": "rf-v1-mock"
+  },
+  "security_assessment": {
+    "risk_score": 0,
+    "overall_severity": "CRITICAL",
+    "triggered_rules": [
+      "R02",
+      "R04",
+      "R06",
+      "R07",
+      "R09",
+      "R10",
+      "R11",
+      "R12",
+      "R13"
+    ],
+    "findings": [
+      {
+        "rule_id": "R02",
+        "description": "3DES-CBC encryption (64-bit block, SWEET32 birthday bound)",
+        "severity": "HIGH",
+        "cve": "CVE-2016-2183",
+        "standard": "RFC 8247",
+        "remediation": "crypto ikev2 policy 10\n no encryption des 3des\n encryption aes-gcm-256"
+      },
+      {
+        "rule_id": "R04",
+        "description": "Diffie-Hellman Group 2 (1024-bit MODP) -- precomputation feasible for a state actor",
+        "severity": "CRITICAL",
+        "cve": null,
+        "standard": "RFC 8247 s4, LOGJAM",
+        "remediation": "crypto ikev2 policy 10\n no group 2\n group 20 21"
+      },
+      {
+        "rule_id": "R06",
+        "description": "IKEv1 Aggressive Mode with PSK -- PSK hash exposed in cleartext",
+        "severity": "CRITICAL",
+        "cve": null,
+        "standard": "PSK hash exposed in cleartext",
+        "remediation": "no crypto ikev1 enable outside\ncrypto ikev2 enable outside"
+      },
+      {
+        "rule_id": "R07",
+        "description": "IKEv1 in use -- deprecated by RFC 9395",
+        "severity": "HIGH",
+        "cve": null,
+        "standard": "RFC 9395",
+        "remediation": "no crypto ikev1 enable outside\ncrypto ikev2 enable outside"
+      },
+      {
+        "rule_id": "R09",
+        "description": "SHA1-HMAC integrity -- deprecated",
+        "severity": "HIGH",
+        "cve": null,
+        "standard": "RFC 8247 s3",
+        "remediation": "crypto ikev2 policy 10\n no integrity md5 sha1\n integrity sha384"
+      },
+      {
+        "rule_id": "R10",
+        "description": "Perfect Forward Secrecy disabled -- one key compromise exposes all past traffic",
+        "severity": "MEDIUM",
+        "cve": null,
+        "standard": "CNSSP-15",
+        "remediation": "crypto map MAP 10 set pfs group20"
+      },
+      {
+        "rule_id": "R11",
+        "description": "SA lifetime exceeds 24 hours",
+        "severity": "MEDIUM",
+        "cve": null,
+        "standard": "NIST SP 800-77 s5",
+        "remediation": "crypto ikev2 policy 10\n lifetime seconds 28800"
+      },
+      {
+        "rule_id": "R12",
+        "description": "SA lifetime exceeds 8 hours",
+        "severity": "LOW",
+        "cve": null,
+        "standard": "Operational hygiene",
+        "remediation": "crypto ikev2 policy 10\n lifetime seconds 28800"
+      },
+      {
+        "rule_id": "R13",
+        "description": "PSK authentication combined with a weak DH group -- offline PSK cracking risk",
+        "severity": "HIGH",
+        "cve": null,
+        "standard": "Offline PSK crack risk",
+        "remediation": "crypto ikev2 policy 10\n no group 2\n group 20 21"
+      }
+    ],
+    "threat_matrix": [
+      {
+        "threat": "3DES-CBC encryption (64-bit block, SWEET32 birthday bound)",
+        "likelihood": "Med",
+        "impact": "High"
+      },
+      {
+        "threat": "Diffie-Hellman Group 2 (1024-bit MODP) -- precomputation feasible for a state actor",
+        "likelihood": "High",
+        "impact": "High"
+      },
+      {
+        "threat": "IKEv1 Aggressive Mode with PSK -- PSK hash exposed in cleartext",
+        "likelihood": "High",
+        "impact": "High"
+      },
+      {
+        "threat": "IKEv1 in use -- deprecated by RFC 9395",
+        "likelihood": "Med",
+        "impact": "High"
+      },
+      {
+        "threat": "SHA1-HMAC integrity -- deprecated",
+        "likelihood": "Med",
+        "impact": "High"
+      },
+      {
+        "threat": "Perfect Forward Secrecy disabled -- one key compromise exposes all past traffic",
+        "likelihood": "Med",
+        "impact": "Med"
+      },
+      {
+        "threat": "SA lifetime exceeds 24 hours",
+        "likelihood": "Med",
+        "impact": "Med"
+      },
+      {
+        "threat": "SA lifetime exceeds 8 hours",
+        "likelihood": "Low",
+        "impact": "Low"
+      },
+      {
+        "threat": "PSK authentication combined with a weak DH group -- offline PSK cracking risk",
+        "likelihood": "Med",
+        "impact": "High"
+      }
+    ],
+    "ai_confidence": 0.91
+  },
+  "reports": {
+    "executive_pdf": null,
+    "technical_html": null,
+    "json_export": null,
+    "cef_export": null
+  }
+}
