@@ -1,0 +1,12 @@
+# VaultScope - optional / stretch dependencies.
+# These are NOT required for the baseline system. Install only when working on
+# the corresponding stretch goal, and pre-test in Docker before the event
+# (see spec Section 12: Risk Register).
+
+# Stage 4b stretch: 1D-CNN over raw packet-size sequences (CPU build).
+torch==2.5.1
+
+# Stage 3 optional accelerator for flow feature extraction.
+# Known risk: may fail to build in Docker. Custom scapy aggregator is the
+# primary path; nfstream is an accelerator only.
+nfstream==6.5.4

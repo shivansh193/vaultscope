@@ -1,0 +1,82 @@
+# VaultScope
+
+**AI-Powered IPsec VPN Protocol Analyzer & Security Assessment Framework**
+SIH 2026 · Problem Statement SIH26160 · NTRO
+
+VaultScope is a passive-first, active-capable IPsec VPN security intelligence
+platform: it ingests traffic at the packet level, reconstructs the cryptographic
+negotiation state of every VPN session, scores each session against a
+CVE-linked rule database, classifies the traffic type running inside each
+encrypted tunnel, and produces layered reports with vendor-specific remediation.
+
+Full design: [`docs/VaultScope_Product_Spec.docx`](docs/VaultScope_Product_Spec.docx).
+
+---
+
+## Repository layout
+
+| Path | Stage | Owner |
+|---|---|---|
+| `testbed/` | Stage 0 — testbed & dataset generator | P1 |
+| `core/ingestion/` | Stage 1 — ingestion engine | P1 |
+| `core/ike_parser/` | Stage 2 — IKEv1/v2 parser | **P2** |
+| `core/flow/` | Stage 3 — ESP flow feature extractor | **P2** |
+| `core/classifiers/` | Stage 4a/4b — protocol + traffic-type ML | **P2** |
+| `core/rules/` | Stage 4c — security rule engine | P3 |
+| `reporting/` | Stage 5 — scoring + report aggregator | P3 |
+| `api/` | FastAPI backend + WebSocket | P3 |
+| `frontend/` | Stage 6 — React dashboard | P4 |
+| `data/` | dataset: pcaps + ground-truth JSONs | P1 |
+| `models/` | trained model artifacts + eval metrics | P2 |
+| `tests/` | mirrors `core/`; run with `pytest` | all |
+| `docs/` | product spec + API reference + setup guide | all |
+
+Slices are developed async against the shared data model (spec Section 5) and
+API contract (spec Section 11). `data/mock/` holds fixture JSON so P4 can build
+the UI before the backend is live.
+
+## Prerequisites
+
+- Python **3.11**
+- `tshark` / Wireshark on `PATH` (runtime dependency of `pyshark`)
+- Docker + Docker Compose (Stage 0 testbed, full-stack demo)
+- Node 18+ (Stage 6 frontend)
+
+## Setup
+
+```bash
+python -m venv .venv
+# Windows:  .venv\Scripts\activate
+# POSIX:    source .venv/bin/activate
+
+pip install -r requirements-dev.txt      # full stack + test tooling
+```
+
+`requirements.lock.txt` is a full `pip freeze` of a known-good resolve
+(Python 3.11, Windows) — use it (`pip install -r requirements.lock.txt`) if you
+hit a dependency-resolution conflict.
+
+`requirements.txt` is the full team manifest. Optional/stretch backends
+(`torch` for the 1D-CNN, `nfstream` for flow acceleration) are in
+`requirements-stretch.txt` — install only when working on that stretch goal.
+
+> On Windows, `weasyprint` (Stage 5, P3) needs the GTK runtime. P2/P1 work does
+> not require it; install the P2 subset if the full install fails on your box:
+> `pip install scapy pyshark scikit-learn xgboost numpy pandas matplotlib joblib pyyaml pytest pytest-cov`
+
+## Running tests
+
+```bash
+pytest                 # whole suite from repo root
+pytest tests/ike_parser # one slice
+pytest -m "not slow"   # skip tests needing the full dataset / trained model
+```
+
+`pyproject.toml` sets `pythonpath = ["."]`, so `import core.ike_parser` works
+with no install step.
+
+## Commit convention
+
+One commit per task ID from spec Section 9, e.g.
+`feat(ike_parser): IKEv2 SA_INIT + IKE_AUTH full VPNSession extraction`.
+Every task ships with its mandatory test passing before merge.
