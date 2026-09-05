@@ -43,6 +43,7 @@ PAYLOAD_TSR = 45
 PAYLOAD_SK = 46
 PAYLOAD_CP = 47
 PAYLOAD_EAP = 48
+PAYLOAD_SKF = 53  # Encrypted and Authenticated Fragment (RFC 7383)
 
 # --- Transform types (RFC 7296 section 3.3.2) -------------------------------
 TRANSFORM_TYPE_ENCR = 1
@@ -246,6 +247,7 @@ V1_PAYLOAD_NAT_D = 20  # RFC 3947
 V1_PAYLOAD_NAT_OA = 21
 V1_PAYLOAD_NAT_D_DRAFT = 130  # draft-ietf-ipsec-nat-t-ike-02/03
 V1_PAYLOAD_NAT_OA_DRAFT = 131
+V1_PAYLOAD_FRAGMENT = 132  # Cisco / draft-smyslov IKEv1 fragmentation
 
 V1_DOI_IPSEC = 1
 

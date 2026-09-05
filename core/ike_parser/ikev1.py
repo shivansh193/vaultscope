@@ -78,7 +78,7 @@ from ._transforms import (
     canon_v1_prf,
 )
 from ._wire import IkeMessage, WireFormatError
-from .ikev2 import _normalise  # shared pcap / source ingestion
+from .ikev2 import _normalise, apply_edge_cases  # shared pcap / source ingestion
 
 _ZERO_COOKIE = b"\x00" * 8
 
@@ -285,6 +285,7 @@ def _analyse(messages: list[IkeMessage], ctx: dict) -> VPNSession:
     ike["nat_traversal"] = nat
 
     ike["capture_complete"] = initial is not None
+    apply_edge_cases(ike, messages, ctx)  # P2-T4: VID vendor, IKE fragmentation, anti-replay
 
     return VPNSession(
         session_id=f"{icookie.hex()}-{rcookie.hex()}",
