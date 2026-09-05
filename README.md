@@ -13,27 +13,37 @@ Full design: [`docs/VaultScope_Product_Spec.docx`](docs/VaultScope_Product_Spec.
 
 ---
 
+## Team
+
+Two engineers. The spec's four slices (P1–P4, Section 8) are grouped into two
+ownership blocks:
+
+| Block | Owner | Slices | Scope |
+|---|---|---|---|
+| **A** | [@shivansh193](https://github.com/shivansh193) | P1 + P2 | Stages 0–4b: testbed, dataset, ingestion, IKE parser, flow features, ML classifiers |
+| **B** | [@p4ralyn](https://github.com/p4ralyn) | P3 + P4 | Stages 4c–6: rule engine, scoring, reports, FastAPI backend, DB, React dashboard, Docker Compose, demo video |
+
 ## Repository layout
 
 | Path | Stage | Owner |
 |---|---|---|
-| `testbed/` | Stage 0 — testbed & dataset generator | P1 |
-| `core/ingestion/` | Stage 1 — ingestion engine | P1 |
-| `core/ike_parser/` | Stage 2 — IKEv1/v2 parser | **P2** |
-| `core/flow/` | Stage 3 — ESP flow feature extractor | **P2** |
-| `core/classifiers/` | Stage 4a/4b — protocol + traffic-type ML | **P2** |
-| `core/rules/` | Stage 4c — security rule engine | P3 |
-| `reporting/` | Stage 5 — scoring + report aggregator | P3 |
-| `api/` | FastAPI backend + WebSocket | P3 |
-| `frontend/` | Stage 6 — React dashboard | P4 |
-| `data/` | dataset: pcaps + ground-truth JSONs | P1 |
-| `models/` | trained model artifacts + eval metrics | P2 |
-| `tests/` | mirrors `core/`; run with `pytest` | all |
-| `docs/` | product spec + API reference + setup guide | all |
+| `testbed/` | Stage 0 — testbed & dataset generator | A |
+| `core/ingestion/` | Stage 1 — ingestion engine | A |
+| `core/ike_parser/` | Stage 2 — IKEv1/v2 parser | A |
+| `core/flow/` | Stage 3 — ESP flow feature extractor | A |
+| `core/classifiers/` | Stage 4a/4b — protocol + traffic-type ML | A |
+| `core/rules/` | Stage 4c — security rule engine | B |
+| `reporting/` | Stage 5 — scoring + report aggregator | B |
+| `api/` | FastAPI backend + WebSocket | B |
+| `frontend/` | Stage 6 — React dashboard | B |
+| `data/` | dataset: pcaps + ground-truth JSONs | A |
+| `models/` | trained model artifacts + eval metrics | A |
+| `tests/` | mirrors `core/`; run with `pytest` | both |
+| `docs/` | product spec + API reference + setup guide | both |
 
-Slices are developed async against the shared data model (spec Section 5) and
-API contract (spec Section 11). `data/mock/` holds fixture JSON so P4 can build
-the UI before the backend is live.
+Blocks are developed async against the shared data model (spec Section 5) and
+API contract (spec Section 11). `data/mock/` holds fixture JSON so Block B can
+build the UI before the backend is live.
 
 ## Prerequisites
 
@@ -60,8 +70,9 @@ hit a dependency-resolution conflict.
 (`torch` for the 1D-CNN, `nfstream` for flow acceleration) are in
 `requirements-stretch.txt` — install only when working on that stretch goal.
 
-> On Windows, `weasyprint` (Stage 5, P3) needs the GTK runtime. P2/P1 work does
-> not require it; install the P2 subset if the full install fails on your box:
+> On Windows, `weasyprint` (Stage 5, Block B) needs the GTK runtime. Block A
+> work does not require it; install the Block A subset if the full install
+> fails on your box:
 > `pip install scapy pyshark scikit-learn xgboost numpy pandas matplotlib joblib pyyaml pytest pytest-cov`
 
 ## Running tests
