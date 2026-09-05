@@ -433,6 +433,7 @@ def _analyse(messages: list[IkeMessage], ctx: dict) -> VPNSession:
     else:
         ike["pfs_status"] = "unknown"
 
+    ike["msg_sizes"] = [m.length or 0 for m in messages]
     return VPNSession(
         session_id=f"{init_spi.hex()}-{resp_spi.hex()}",
         initiator_ip=ctx.get("initiator_ip") or "",

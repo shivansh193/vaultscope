@@ -292,6 +292,7 @@ def _analyse(messages: list[IkeMessage], ctx: dict) -> VPNSession:
     ike["capture_complete"] = initial is not None
     apply_edge_cases(ike, messages, ctx)  # P2-T4: VID vendor, IKE fragmentation, anti-replay
 
+    ike["msg_sizes"] = [m.length or 0 for m in messages]
     return VPNSession(
         session_id=f"{icookie.hex()}-{rcookie.hex()}",
         initiator_ip=ctx.get("initiator_ip") or "",

@@ -105,6 +105,24 @@ def health() -> HealthResponse:
     )
 
 
+_METRICS_PATH = Path(__file__).resolve().parent.parent / "models" / "eval_metrics.json"
+
+
+@app.get("/model/metrics")
+def model_metrics() -> dict:
+    """Stage 4b evaluation artifacts for the dashboard: accuracy, macro-F1,
+    per-class scores and RandomForest feature importances. ``{}`` until a model
+    is trained (`python -m core.classifiers.train`)."""
+    import json
+
+    if not _METRICS_PATH.exists():
+        return {}
+    try:
+        return json.loads(_METRICS_PATH.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
 @app.post("/ingest", response_model=IngestResponse)
 async def ingest(file: UploadFile = File(...)) -> IngestResponse:
     """Analyse an uploaded pcap and persist the resulting sessions."""

@@ -209,3 +209,13 @@ def test_diff_returns_whole_sessions_not_just_ids(client, test_pcap):
     # Both whole records travel with it, so the UI can show before and after.
     assert degraded["base"]["security_assessment"]["risk_score"] == 90
     assert degraded["compare"]["security_assessment"]["risk_score"] == 20
+
+
+def test_model_metrics_route(client):
+    resp = client.get("/model/metrics")
+    assert resp.status_code == 200
+    body = resp.json()
+    # models/eval_metrics.json ships in the repo, so this should be populated
+    if body:
+        assert "f1_macro" in body
+        assert isinstance(body.get("feature_importance", {}), dict)
