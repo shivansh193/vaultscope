@@ -175,3 +175,37 @@ def test_ingest_does_not_leak_upload_files(client, test_pcap):
         client.post("/ingest", files={"file": ("ike.pcap", fh)})
     after = set(UPLOAD_DIR.glob("*")) if UPLOAD_DIR.exists() else set()
     assert after == before, "uploaded capture was not cleaned up"
+
+
+def test_diff_returns_whole_sessions_not_just_ids(client, test_pcap):
+    """A caller comparing captures is about to ask what changed; make them
+    re-fetch the records to answer that and the endpoint has done half a job."""
+    from api import store
+    from core.models import VPNSession
+
+    healthy = VPNSession(session_id="drifting")
+    healthy.security_assessment.risk_score = 90
+    healthy.security_assessment.overall_severity = "LOW"
+    store.save_sessions("job-before", [healthy], capture_file="before.pcap")
+
+    worse = VPNSession(session_id="drifting")
+    worse.security_assessment.risk_score = 20
+    worse.security_assessment.overall_severity = "CRITICAL"
+    gone_and_new = VPNSession(session_id="brand-new")
+    store.save_sessions("job-after", [worse, gone_and_new], capture_file="after.pcap")
+
+    body = client.get(
+        "/sessions/diff", params={"base_job": "job-before", "compare_job": "job-after"}
+    ).json()
+
+    assert [s["session_id"] for s in body["added"]] == ["brand-new"]
+    assert body["added"][0]["ike"]["encryption"], "added entries are full session records"
+    assert body["removed"] == []
+
+    (degraded,) = body["degraded"]
+    assert degraded["session_id"] == "drifting"
+    assert (degraded["base_severity"], degraded["compare_severity"]) == ("LOW", "CRITICAL")
+    assert (degraded["base_score"], degraded["compare_score"]) == (90, 20)
+    # Both whole records travel with it, so the UI can show before and after.
+    assert degraded["base"]["security_assessment"]["risk_score"] == 90
+    assert degraded["compare"]["security_assessment"]["risk_score"] == 20
