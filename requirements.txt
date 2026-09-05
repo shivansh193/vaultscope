@@ -1,0 +1,42 @@
+# VaultScope - full project runtime dependencies (spec Section 6: Tech Stack)
+#
+# Per-slice notes:
+#   P1  ingestion/testbed : pyshark, scapy
+#   P2  parser/flow/ML     : scapy, pyshark, scikit-learn, xgboost, numpy, pandas,
+#                            matplotlib, joblib
+#   P3  rules/reports/api  : pyyaml, jinja2, weasyprint, reportlab, fastapi, uvicorn
+#
+# Stretch / optional ML backends live in requirements-stretch.txt (torch, nfstream).
+
+# --- packet capture & protocol parsing (Stage 1, 2, 3) ---
+scapy==2.6.1
+pyshark==0.6
+
+# --- numerics & data (Stage 3, 4) ---
+numpy==1.26.4
+pandas==2.2.3
+
+# --- machine learning (Stage 4a, 4b) ---
+scikit-learn==1.5.2
+xgboost==2.1.3
+joblib==1.4.2
+
+# --- evaluation artifacts: confusion matrix, feature-importance charts (Stage 4b) ---
+matplotlib==3.9.2
+
+# --- rule engine (Stage 4c) ---
+PyYAML==6.0.2
+
+# --- reporting (Stage 5) ---
+Jinja2==3.1.4
+weasyprint==62.3
+reportlab==4.2.5
+
+# --- backend API (Stage 5 / integration) ---
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+python-multipart==0.0.17
+websockets==13.1
+
+# --- schema validation (dataset labels, JSON/CEF export) ---
+jsonschema==4.23.0
