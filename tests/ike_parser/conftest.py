@@ -72,3 +72,22 @@ def esp_only_fixture(tmp_path) -> str:
 @pytest.fixture
 def esp_only_pcap_fixture(esp_only_fixture) -> str:
     return esp_only_fixture
+
+
+# --- IKEv1 (P2-T2) --------------------------------------------------------------
+@pytest.fixture
+def aggr_pcap(tmp_path) -> str:
+    """IKEv1 Aggressive Mode: ID payload rides in message 1 in the clear."""
+    return B.write_pcap(tmp_path / "ikev1_aggressive.pcap", B.v1_aggressive_mode())
+
+
+@pytest.fixture
+def main_mode_pcap(tmp_path) -> str:
+    """IKEv1 Main Mode messages 1-2: SA offer / choice, no ID payload yet."""
+    return B.write_pcap(tmp_path / "ikev1_main.pcap", B.v1_main_mode())
+
+
+@pytest.fixture
+def retransmit_pcap(tmp_path) -> str:
+    """IKEv1 Main Mode with a retransmitted message 1 (3 messages, still Main)."""
+    return B.write_pcap(tmp_path / "ikev1_retransmit.pcap", B.v1_main_mode_with_retransmit())

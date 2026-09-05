@@ -85,9 +85,10 @@ class _PcapMessage:
 
 
 def _read_pcap(path: str | os.PathLike) -> tuple[list[_PcapMessage], bool]:
-    """Return (ike_messages, saw_esp). Non-IKE / IKEv1 / malformed frames are
-    skipped; ``saw_esp`` is True if any ESP packet (proto 50 or ESP-in-UDP)
-    was present, which lets a mid-session capture still yield a session id.
+    """Return (ike_messages, saw_esp). Non-IKE / malformed frames are skipped;
+    both IKEv1 and IKEv2 messages are kept (callers filter by version).
+    ``saw_esp`` is True if any ESP packet (proto 50 or ESP-in-UDP) was present,
+    which lets a mid-session capture still yield a session id.
     """
     from scapy.layers.inet import IP, UDP  # noqa: PLC0415  (lazy: keep import light)
     from scapy.layers.inet6 import IPv6  # noqa: PLC0415
@@ -145,7 +146,7 @@ def _read_pcap(path: str | os.PathLike) -> tuple[list[_PcapMessage], bool]:
             msg = decode_message(ike_bytes)
         except (WireFormatError, struct.error):
             continue
-        if not msg.is_ikev2:
+        if not (msg.is_ikev2 or msg.is_ikev1):
             continue
 
         out.append(
@@ -164,7 +165,11 @@ def _read_pcap(path: str | os.PathLike) -> tuple[list[_PcapMessage], bool]:
 # source normalisation                                                         #
 # --------------------------------------------------------------------------- #
 def _normalise(source) -> tuple[list[IkeMessage], dict]:
-    """Return (ikev2 messages in capture order, context dict)."""
+    """Return (all IKE messages in capture order, context dict).
+
+    Both IKEv1 and IKEv2 messages are returned; ``parse_ikevN`` filters by
+    version. Kept in ``ikev2`` for history; ``ikev1`` imports it.
+    """
     ctx: dict = {"ip_version": None, "initiator_ip": None, "responder_ip": None, "saw_esp": False}
 
     if isinstance(source, str | os.PathLike):
@@ -186,14 +191,17 @@ def _normalise(source) -> tuple[list[IkeMessage], dict]:
             msg = decode_message(bytes(item))
         else:
             raise TypeError(f"unsupported IKE source element: {type(item)!r}")
-        if msg.is_ikev2:
+        if msg.is_ikev2 or msg.is_ikev1:
             messages.append(msg)
     return messages, ctx
 
 
 def _fill_ip_ctx(ctx: dict, pmsgs: list[_PcapMessage]) -> dict:
+    # first non-response message with message_id 0 = the initiator's opening
+    # message (IKEv2 SA_INIT request, or IKEv1 MM/AM message 1). IKEv1 has no
+    # response flag, so the earliest capture-order match is the initiator's.
     for p in pmsgs:
-        if p.msg.exchange_type == EXCHANGE_IKE_SA_INIT and not p.msg.is_response:
+        if not p.msg.is_response and p.msg.message_id == 0:
             ctx["initiator_ip"] = p.src_ip
             ctx["responder_ip"] = p.dst_ip
             return ctx
@@ -361,6 +369,7 @@ def _bucket(messages: list[IkeMessage]) -> OrderedDict[bytes, list[IkeMessage]]:
 def parse_ikev2_sessions(source) -> list[VPNSession]:
     """Every IKEv2 SA found in ``source`` (see module docstring for types)."""
     messages, ctx = _normalise(source)
+    messages = [m for m in messages if m.is_ikev2]
     if not messages:
         if ctx.get("saw_esp"):
             return [
@@ -389,6 +398,6 @@ def parse_ikev2(source) -> VPNSession:
 
 
 def iter_ike_messages(source) -> Iterable[IkeMessage]:
-    """Low-level helper: decoded IKEv2 messages, in capture order."""
+    """Low-level helper: every decoded IKE message (v1 + v2), in capture order."""
     messages, _ = _normalise(source)
     return messages

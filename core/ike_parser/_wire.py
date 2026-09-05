@@ -38,11 +38,15 @@ from ._transforms import (
 
 IKE_HEADER_LEN = 28
 IKE_VERSION_2 = 0x20
+IKE_VERSION_1 = 0x10
 
-# IKE header flags (RFC 7296 section 3.1)
+# IKEv2 header flags (RFC 7296 section 3.1)
 FLAG_INITIATOR = 0x08
 FLAG_VERSION = 0x10
 FLAG_RESPONSE = 0x20
+
+# ISAKMP / IKEv1 header flags (RFC 2408 section 3.1)
+V1_FLAG_ENCRYPTION = 0x01
 
 
 class WireFormatError(ValueError):
@@ -107,6 +111,7 @@ class IkeMessage:
     length: int
     payloads: list[Payload] = field(default_factory=list)
     truncated: bool = False  # declared length > bytes available
+    encrypted: bool = False  # IKEv1 message with the ENCRYPTION flag set -> body not framed
 
     # --- flag helpers ---
     @property
@@ -120,6 +125,10 @@ class IkeMessage:
     @property
     def is_ikev2(self) -> bool:
         return self.version == IKE_VERSION_2
+
+    @property
+    def is_ikev1(self) -> bool:
+        return self.version == IKE_VERSION_1
 
     def find(self, payload_type: int, *, deep: bool = True) -> list[Payload]:
         """All payloads of a type, descending into a decrypted SK by default."""
@@ -309,6 +318,13 @@ def decode_message(raw: bytes) -> IkeMessage:
     body = raw[IKE_HEADER_LEN:]
     if length and length > len(raw):
         msg.truncated = True
+
+    # IKEv1 Main Mode messages 5-6 (and all later phases) are encrypted under
+    # SKEYID_e: the payload area is ciphertext, not framable. Leave payloads
+    # empty rather than manufacturing garbage from it.
+    if version == IKE_VERSION_1 and (flags & V1_FLAG_ENCRYPTION):
+        msg.encrypted = True
+        return msg
 
     nxt = next_payload
     off = 0

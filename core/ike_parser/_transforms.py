@@ -191,3 +191,135 @@ def canon_auth_method(method: int | None, *, eap: bool = False) -> str | None:
     if method in (AUTH_METHOD_ECDSA_256, AUTH_METHOD_ECDSA_384, AUTH_METHOD_ECDSA_521):
         return "ECDSA"
     return f"AUTH_METHOD_{method}"
+
+
+# =========================================================================== #
+# IKEv1 / ISAKMP  (RFC 2408 + RFC 2409)                                        #
+# --------------------------------------------------------------------------- #
+# IKEv1 payload numbering and phase-1 SA attributes differ from IKEv2, so they
+# live in their own namespace (``V1_*``). D-H group numbers are shared with
+# IKEv2, so ``canon_dh_group`` is reused.
+# =========================================================================== #
+
+IKE_VERSION_1 = 0x10
+
+# ISAKMP header flags (RFC 2408 section 3.1)
+V1_FLAG_ENCRYPTION = 0x01
+V1_FLAG_COMMIT = 0x02
+V1_FLAG_AUTH_ONLY = 0x04
+
+# Exchange types (RFC 2408 section 3.1 + RFC 2409)
+EXCHANGE_V1_BASE = 1
+EXCHANGE_V1_IDENTITY_PROTECT = 2  # Main Mode
+EXCHANGE_V1_AUTH_ONLY = 3
+EXCHANGE_V1_AGGRESSIVE = 4  # Aggressive Mode
+EXCHANGE_V1_INFORMATIONAL = 5
+EXCHANGE_V1_QUICK = 32  # Quick Mode (phase 2)
+EXCHANGE_V1_NEW_GROUP = 33
+
+EXCHANGE_V1_NAMES = {
+    EXCHANGE_V1_BASE: "Base",
+    EXCHANGE_V1_IDENTITY_PROTECT: "Main Mode",
+    EXCHANGE_V1_AUTH_ONLY: "Authentication Only",
+    EXCHANGE_V1_AGGRESSIVE: "Aggressive Mode",
+    EXCHANGE_V1_INFORMATIONAL: "Informational",
+    EXCHANGE_V1_QUICK: "Quick Mode",
+    EXCHANGE_V1_NEW_GROUP: "New Group Mode",
+}
+
+# Payload types (RFC 2408 section 3.1)
+V1_PAYLOAD_NONE = 0
+V1_PAYLOAD_SA = 1
+V1_PAYLOAD_PROPOSAL = 2
+V1_PAYLOAD_TRANSFORM = 3
+V1_PAYLOAD_KE = 4
+V1_PAYLOAD_ID = 5
+V1_PAYLOAD_CERT = 6
+V1_PAYLOAD_CERTREQ = 7
+V1_PAYLOAD_HASH = 8
+V1_PAYLOAD_SIG = 9
+V1_PAYLOAD_NONCE = 10
+V1_PAYLOAD_NOTIFICATION = 11
+V1_PAYLOAD_DELETE = 12
+V1_PAYLOAD_VENDOR_ID = 13
+V1_PAYLOAD_NAT_D = 20  # RFC 3947
+V1_PAYLOAD_NAT_OA = 21
+V1_PAYLOAD_NAT_D_DRAFT = 130  # draft-ietf-ipsec-nat-t-ike-02/03
+V1_PAYLOAD_NAT_OA_DRAFT = 131
+
+V1_DOI_IPSEC = 1
+
+# Phase-1 SA attribute types (RFC 2409 Appendix A)
+V1_ATTR_ENCRYPTION = 1
+V1_ATTR_HASH = 2
+V1_ATTR_AUTH_METHOD = 3
+V1_ATTR_GROUP_DESC = 4
+V1_ATTR_LIFE_TYPE = 11
+V1_ATTR_LIFE_DURATION = 12
+V1_ATTR_PRF = 13
+V1_ATTR_KEY_LENGTH = 14
+
+V1_LIFE_TYPE_SECONDS = 1
+V1_LIFE_TYPE_KILOBYTES = 2
+
+# RFC 2409 Appendix A "Encryption Algorithm". IDs 7 (AES-CBC) and 8
+# (Camellia-CBC) are key-length dependent and handled in canon_v1_encryption.
+_V1_ENCR_NAMES = {
+    1: "DES-CBC",
+    2: "IDEA-CBC",
+    3: "BLOWFISH-CBC",
+    4: "RC5-CBC",
+    5: "3DES-CBC",
+    6: "CAST-CBC",
+}
+
+
+def canon_v1_encryption(attr_id: int, key_length: int | None) -> str:
+    if attr_id == 7:  # AES-CBC
+        return f"AES-{key_length or 128}-CBC"
+    if attr_id == 8:  # Camellia-CBC
+        return f"CAMELLIA-{key_length or 128}-CBC"
+    return _V1_ENCR_NAMES.get(attr_id, f"ENCR_{attr_id}")
+
+
+_V1_HASH_INTEG = {
+    1: "HMAC-MD5",
+    2: "HMAC-SHA1",
+    4: "HMAC-SHA256",
+    5: "HMAC-SHA384",
+    6: "HMAC-SHA512",
+}
+_V1_HASH_PRF = {
+    1: "PRF_HMAC_MD5",
+    2: "PRF_HMAC_SHA1",
+    4: "PRF_HMAC_SHA2_256",
+    5: "PRF_HMAC_SHA2_384",
+    6: "PRF_HMAC_SHA2_512",
+}
+
+
+def canon_v1_integrity(hash_id: int | None) -> str | None:
+    if hash_id is None:
+        return None
+    return _V1_HASH_INTEG.get(hash_id, f"HASH_{hash_id}")
+
+
+def canon_v1_prf(hash_id: int | None) -> str | None:
+    if hash_id is None:
+        return None
+    return _V1_HASH_PRF.get(hash_id, f"PRF_{hash_id}")
+
+
+def canon_v1_auth_method(method: int | None) -> str | None:
+    """RFC 2409 Appendix A + XAUTH (draft-beaulieu-ike-xauth, Cisco 65001-65004)."""
+    if method is None:
+        return None
+    if method == 1:
+        return "PSK"
+    if method == 2:
+        return "DSS"
+    if method in (3, 4, 5):
+        return "RSA"
+    if 65001 <= method <= 65010 or method in (128, 129, 130, 131):
+        return "XAUTH"
+    return f"AUTH_METHOD_{method}"

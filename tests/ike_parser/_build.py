@@ -19,6 +19,9 @@ from core.ike_parser._transforms import (
     EXCHANGE_CREATE_CHILD_SA,
     EXCHANGE_IKE_AUTH,
     EXCHANGE_IKE_SA_INIT,
+    EXCHANGE_V1_AGGRESSIVE,
+    EXCHANGE_V1_IDENTITY_PROTECT,
+    IKE_VERSION_1,
     NOTIFY_NAT_DETECTION_DESTINATION_IP,
     NOTIFY_NAT_DETECTION_SOURCE_IP,
     NOTIFY_REKEY_SA,
@@ -38,6 +41,21 @@ from core.ike_parser._transforms import (
     TRANSFORM_TYPE_ENCR,
     TRANSFORM_TYPE_INTEG,
     TRANSFORM_TYPE_PRF,
+    V1_ATTR_AUTH_METHOD,
+    V1_ATTR_ENCRYPTION,
+    V1_ATTR_GROUP_DESC,
+    V1_ATTR_HASH,
+    V1_ATTR_KEY_LENGTH,
+    V1_ATTR_LIFE_DURATION,
+    V1_ATTR_LIFE_TYPE,
+    V1_DOI_IPSEC,
+    V1_LIFE_TYPE_SECONDS,
+    V1_PAYLOAD_HASH,
+    V1_PAYLOAD_ID,
+    V1_PAYLOAD_KE,
+    V1_PAYLOAD_NONCE,
+    V1_PAYLOAD_SA,
+    V1_PAYLOAD_VENDOR_ID,
 )
 
 IKE_VERSION_2 = 0x20
@@ -339,3 +357,125 @@ CIPHER_PRESETS: dict[str, dict] = {
 def sa_init_for_preset(name: str) -> list[bytes]:
     p = CIPHER_PRESETS[name]
     return sa_init_pair(p["encr"], p["prf"], p["integ"], p["dh"], keylen=p["keylen"])
+
+
+# =========================================================================== #
+# IKEv1 / ISAKMP builders (P2-T2)                                              #
+# =========================================================================== #
+_V1_ICOOKIE = bytes.fromhex("1111111122222222")
+_V1_RCOOKIE = bytes.fromhex("3333333344444444")
+
+
+def _v1_message(
+    exch_type: int,
+    message_id: int,
+    payloads: list[tuple[int, bytes]],
+    *,
+    icookie: bytes = _V1_ICOOKIE,
+    rcookie: bytes = _V1_RCOOKIE,
+    flags: int = 0,
+) -> bytes:
+    first, body = _chain(payloads)
+    hdr = (
+        icookie
+        + rcookie
+        + struct.pack(">BBBB", first, IKE_VERSION_1, exch_type, flags)
+        + struct.pack(">II", message_id, 28 + len(body))
+    )
+    return hdr + body
+
+
+def _v1_tv(attr_type: int, value: int) -> bytes:
+    return struct.pack(">HH", 0x8000 | attr_type, value)
+
+
+def v1_phase1_sa(
+    *,
+    enc: int = 5,  # 3DES-CBC
+    hash_: int = 1,  # MD5
+    auth: int = 1,  # PSK
+    group: int = 2,  # MODP1024
+    keylen: int | None = None,
+    life_sec: int | None = 28800,
+) -> bytes:
+    """A phase-1 ISAKMP SA payload body: DOI + Situation + 1 proposal / 1 transform."""
+    attrs = _v1_tv(V1_ATTR_ENCRYPTION, enc) + _v1_tv(V1_ATTR_HASH, hash_)
+    attrs += _v1_tv(V1_ATTR_AUTH_METHOD, auth) + _v1_tv(V1_ATTR_GROUP_DESC, group)
+    if keylen is not None:
+        attrs += _v1_tv(V1_ATTR_KEY_LENGTH, keylen)
+    if life_sec is not None:
+        attrs += _v1_tv(V1_ATTR_LIFE_TYPE, V1_LIFE_TYPE_SECONDS)
+        # Life Duration as TLV (4-byte), the common on-wire encoding
+        attrs += struct.pack(">HH", V1_ATTR_LIFE_DURATION, 4) + struct.pack(">I", life_sec)
+
+    # transform: generic hdr(next=0) + [tf#=1, tf-id=1 KEY_IKE, 2 reserved] + attrs
+    tf_body = struct.pack(">BBH", 1, 1, 0) + attrs
+    transform = struct.pack(">BBH", 0, 0, 4 + len(tf_body)) + tf_body
+    # proposal: generic hdr(next=0) + [prop#=1, proto=1 ISAKMP, spi_size=0, #tf=1] + transform
+    prop_body = struct.pack(">BBBB", 1, 1, 0, 1) + transform
+    proposal = struct.pack(">BBH", 0, 0, 4 + len(prop_body)) + prop_body
+    return struct.pack(">II", V1_DOI_IPSEC, 1) + proposal
+
+
+def _v1_ke() -> bytes:
+    return b"\xcc" * 96
+
+
+def _v1_nonce() -> bytes:
+    return b"\x5a" * 20
+
+
+def _v1_id_ipv4(addr: bytes = b"\xc0\xa8\x01\x01") -> bytes:
+    # IPSEC DOI ID payload: ID type(1)=ID_IPV4_ADDR, protocol(1), port(2), data
+    return struct.pack(">BBH", 1, 0, 0) + addr
+
+
+def _v1_hash_payload() -> bytes:
+    return b"\x99" * 16
+
+
+def v1_main_mode(*, sa: bytes | None = None, with_vendor_id: bool = True) -> list[bytes]:
+    """Main Mode messages 1-2 (SA offer / SA choice). No ID in msg 1."""
+    sa = sa if sa is not None else v1_phase1_sa()
+    mm1_payloads = [(V1_PAYLOAD_SA, sa)]
+    if with_vendor_id:
+        mm1_payloads.append((V1_PAYLOAD_VENDOR_ID, b"\x1e\x2b\x51\x69" * 4))
+    mm1 = _v1_message(EXCHANGE_V1_IDENTITY_PROTECT, 0, mm1_payloads, rcookie=b"\x00" * 8)
+    mm2 = _v1_message(EXCHANGE_V1_IDENTITY_PROTECT, 0, [(V1_PAYLOAD_SA, sa)])
+    return [mm1, mm2]
+
+
+def v1_aggressive_mode(*, sa: bytes | None = None) -> list[bytes]:
+    """Aggressive Mode message 1: SA + KE + Nonce + ID (ID in the clear)."""
+    sa = (
+        sa if sa is not None else v1_phase1_sa(enc=1, hash_=1, auth=1, group=2)
+    )  # DES/MD5/PSK/MODP1024
+    am1 = _v1_message(
+        EXCHANGE_V1_AGGRESSIVE,
+        0,
+        [
+            (V1_PAYLOAD_SA, sa),
+            (V1_PAYLOAD_KE, _v1_ke()),
+            (V1_PAYLOAD_NONCE, _v1_nonce()),
+            (V1_PAYLOAD_ID, _v1_id_ipv4()),
+        ],
+        rcookie=b"\x00" * 8,
+    )
+    am2 = _v1_message(
+        EXCHANGE_V1_AGGRESSIVE,
+        0,
+        [
+            (V1_PAYLOAD_SA, sa),
+            (V1_PAYLOAD_KE, _v1_ke()),
+            (V1_PAYLOAD_NONCE, _v1_nonce()),
+            (V1_PAYLOAD_ID, _v1_id_ipv4(b"\xc0\xa8\x02\x01")),
+            (V1_PAYLOAD_HASH, _v1_hash_payload()),
+        ],
+    )
+    return [am1, am2]
+
+
+def v1_main_mode_with_retransmit(*, sa: bytes | None = None) -> list[bytes]:
+    """Main Mode 1, 1 (retransmit), 2 -- 3 messages, but not Aggressive Mode."""
+    mm1, mm2 = v1_main_mode(sa=sa, with_vendor_id=False)
+    return [mm1, mm1, mm2]
