@@ -262,6 +262,66 @@ def sa_init_pair(encr, prf, integ, dh, *, keylen=None) -> list[bytes]:
     return [req, resp]
 
 
+# --- P2-T4 edge-case builders ----------------------------------------------
+# Well-known Vendor ID payload values (see core.ike_parser._vendor_ids).
+VID_STRONGSWAN = bytes.fromhex("882fe56d6fd20dbc2251613b2ebe5beb") + b"\x05\x09\x04"
+VID_CISCO_ASA = bytes.fromhex("1f07f70eaa6514d3b0fa96542a500100")
+VID_UNKNOWN = bytes.fromhex("deadbeefcafef00d0011223344556677")
+
+_PAYLOAD_VENDOR_ID = 43  # IKEv2
+_PAYLOAD_SKF = 53  # RFC 7383 fragment
+
+
+def sa_init_with_vids(preset: str, *vids: bytes) -> list[bytes]:
+    """An SA_INIT pair for ``preset`` with Vendor ID payload(s) in the request."""
+    p = CIPHER_PRESETS[preset]  # defined later in this module; resolved at call time
+    req_payloads = [
+        (PAYLOAD_SA, _sa_ike(p["encr"], p["prf"], p["integ"], p["dh"], keylen=p["keylen"])),
+        (PAYLOAD_KE, _ke(p["dh"] or 19)),
+        (PAYLOAD_NONCE, _nonce()),
+        *[(_PAYLOAD_VENDOR_ID, v) for v in vids],
+    ]
+    resp_payloads = [
+        (PAYLOAD_SA, _sa_ike(p["encr"], p["prf"], p["integ"], p["dh"], keylen=p["keylen"])),
+        (PAYLOAD_KE, _ke(p["dh"] or 19)),
+        (PAYLOAD_NONCE, _nonce()),
+    ]
+    return [
+        _message(EXCHANGE_IKE_SA_INIT, FLAG_INITIATOR, 0, req_payloads, resp_spi=_ZERO_SPI),
+        _message(EXCHANGE_IKE_SA_INIT, FLAG_RESPONSE, 0, resp_payloads),
+    ]
+
+
+def ikev2_fragment_message() -> bytes:
+    """An IKE message whose payload chain contains an SKF fragment (type 53)."""
+    return _message(
+        EXCHANGE_IKE_AUTH, FLAG_INITIATOR, 1, [(_PAYLOAD_SKF, b"\x00\x01\x00\x02" + b"\x11" * 40)]
+    )
+
+
+def write_esp_pcap(
+    path: str | Path,
+    *,
+    n: int = 8,
+    spi: int = 0xC0FFEE01,
+    static_seq: bool = False,
+    src: str = "192.168.10.1",
+    dst: str = "192.168.20.1",
+) -> str:
+    """ESP data packets. ``static_seq`` keeps every sequence number at 0
+    (anti-replay effectively disabled)."""
+    from scapy.layers.inet import IP
+    from scapy.layers.ipsec import ESP
+    from scapy.utils import wrpcap
+
+    pkts = [
+        IP(src=src, dst=dst) / ESP(spi=spi, seq=0 if static_seq else i + 1, data=b"\x42" * 80)
+        for i in range(n)
+    ]
+    wrpcap(str(path), pkts)
+    return str(path)
+
+
 def ike_auth_request(
     *,
     auth_method: int = 2,
