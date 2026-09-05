@@ -40,3 +40,13 @@ describe("api client", () => {
     );
   });
 });
+
+describe("liveSocketUrl behind a relative base", () => {
+  it("resolves against the page when the API base is a path", async () => {
+    vi.resetModules();
+    vi.stubEnv("NEXT_PUBLIC_API_BASE", "/api");
+    const { liveSocketUrl: relative } = await import("./api");
+    expect(relative()).toBe(`ws://${window.location.host}/api/ws/live`);
+    vi.unstubAllEnvs();
+  });
+});
