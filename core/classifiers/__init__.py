@@ -1,4 +1,4 @@
-"""Stage 4a + 4b - Classifiers (owner: P2).
+"""Stage 4a + 4b - Classifiers (P2, Block A / @shivansh193).
 
 Stage 4a  Protocol/Crypto Classifier - Random Forest fallback for sessions
           where deterministic IKE parsing is incomplete.
