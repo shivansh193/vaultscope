@@ -1,0 +1,124 @@
+{# Technical report: security engineers. Full decode, CVE links, config diffs. #}
+<html lang="en">
+<head><meta charset="utf-8"><title>VaultScope Technical Report</title>
+<style>{{ css }}</style></head>
+<body>
+
+<div class="masthead">
+  <h1>IPsec VPN Technical Assessment</h1>
+  <div class="meta">
+    Technical report &middot; {{ generated_at }}
+    {%- if capture_name %} &middot; capture: {{ capture_name }}{% endif %}
+    &middot; {{ summary.session_count }} session{{ '' if summary.session_count == 1 else 's' }}
+    &middot; posture {{ summary.posture_score }}/100
+  </div>
+</div>
+
+<h2>Session inventory</h2>
+<table>
+  <tr>
+    <th>Session</th><th>Peers</th><th>IKE</th><th>Encryption</th><th>DH</th>
+    <th>PFS</th><th>Traffic</th><th>Score</th><th>Severity</th>
+  </tr>
+  {% for s in sessions %}
+  <tr>
+    <td><code>{{ s.session_id }}</code></td>
+    <td class="small">{{ s.initiator_ip }} &rarr; {{ s.responder_ip }}</td>
+    <td>{{ s.ike.version }}{% if s.ike.aggressive_mode %} <span class="sev sev-CRITICAL">AGGR</span>{% endif %}</td>
+    <td>{{ s.ike.encryption }}</td>
+    <td>{{ s.ike.dh_group }}</td>
+    <td>{{ s.ike.pfs_status }}</td>
+    <td>{{ s.traffic_prediction.predicted_type }}
+        <span class="muted small">{{ '%.0f'|format(s.traffic_prediction.confidence * 100) }}%</span></td>
+    <td>{{ s.security_assessment.risk_score }}</td>
+    <td class="sev sev-{{ s.security_assessment.overall_severity }}">{{ s.security_assessment.overall_severity }}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h2>Threat matrix</h2>
+{% if summary.threat_matrix %}
+<table>
+  <tr><th>Threat</th><th>Likelihood</th><th>Impact</th></tr>
+  {% for t in summary.threat_matrix %}
+  <tr><td>{{ t.threat }}</td><td>{{ t.likelihood }}</td><td>{{ t.impact }}</td></tr>
+  {% endfor %}
+</table>
+{% else %}<p class="muted">No threats identified.</p>{% endif %}
+
+<div class="page-break"></div>
+<h2>Findings and remediation</h2>
+{% for session in sessions %}
+  {% if session.security_assessment.findings %}
+  <h3><code>{{ session.session_id }}</code>
+      <span class="muted small">{{ session.initiator_ip }} &rarr; {{ session.responder_ip }}
+      &middot; vendor: {{ session.ike.vendor }}</span></h3>
+    {% for f in session.security_assessment.findings %}
+    <div class="finding">
+      <div class="finding-head">
+        <strong>{{ f.rule_id }} &mdash; {{ f.description }}</strong>
+        <span class="sev sev-{{ f.severity }}">{{ f.severity }}</span>
+      </div>
+      <div class="small muted">
+        {% set surl = standard_url(f.standard) %}
+        {% if surl %}<a href="{{ surl }}">{{ f.standard }}</a>{% else %}{{ f.standard }}{% endif %}
+        {%- if f.cve %} &middot; <a href="{{ cve_url(f.cve) }}">{{ f.cve }}</a>{% endif %}
+      </div>
+      <pre>{{ f.remediation }}</pre>
+    </div>
+    {% endfor %}
+  {% endif %}
+{% endfor %}
+
+<h2>Full IKE parameter decode</h2>
+{% for s in sessions %}
+<h3><code>{{ s.session_id }}</code></h3>
+<table>
+  <tr><th>Parameter</th><th>Value</th><th>Parameter</th><th>Value</th></tr>
+  {% set items = s.ike.model_dump().items() | list %}
+  {% for i in range(0, items|length, 2) %}
+  <tr>
+    <td class="muted">{{ items[i][0] }}</td><td><code>{{ items[i][1] }}</code></td>
+    {% if i + 1 < items|length %}
+    <td class="muted">{{ items[i+1][0] }}</td><td><code>{{ items[i+1][1] }}</code></td>
+    {% else %}<td></td><td></td>{% endif %}
+  </tr>
+  {% endfor %}
+</table>
+{% endfor %}
+
+<h2>Classifier performance</h2>
+{% if confusion_matrix %}
+<table>
+  <tr><th>Actual \ Predicted</th>{% for label in confusion_matrix.labels %}<th>{{ label }}</th>{% endfor %}</tr>
+  {% for row_label in confusion_matrix.labels %}
+  <tr>
+    <td class="muted">{{ row_label }}</td>
+    {% for value in confusion_matrix.matrix[loop.index0] %}<td>{{ value }}</td>{% endfor %}
+  </tr>
+  {% endfor %}
+</table>
+<p class="small muted">Model {{ confusion_matrix.model_version | default('unspecified') }}
+  {%- if confusion_matrix.accuracy %} &middot; overall accuracy
+  {{ '%.1f'|format(confusion_matrix.accuracy * 100) }}%{% endif %}</p>
+{% else %}
+<p class="muted">No trained classifier metrics available &mdash;
+the Stage 4b model has not been trained yet,
+so <code>models/confusion_matrix.json</code> does not exist. Traffic-type
+predictions in this report carry the untrained default confidence.</p>
+{% endif %}
+
+<div class="disclosure">
+  <strong>Honest reporting of ML limits.</strong> Stage 4a (protocol and crypto
+  identification) is deterministic &mdash; IKE declares these parameters in
+  cleartext, so those fields are parsed, not predicted. Stage 4b (traffic type
+  inside ESP) is side-channel inference over packet-size, timing, direction and
+  burst metadata; accuracy is not 100% and is reported above as a confusion
+  matrix rather than a single headline number. The training data is lab-clean
+  with no competing cross-traffic, so accuracy on real, noisy networks will be
+  lower. The "Chat" class is approximated with a bursty chat-sized generator
+  rather than real messenger traffic, which cannot be run in an isolated lab.
+</div>
+
+</body>
+</html>

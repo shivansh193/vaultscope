@@ -1,0 +1,81 @@
+/* Shared print styling for VaultScope reports (WeasyPrint).
+   Deliberately restrained: this goes to a DG/CISO, not a marketing deck. */
+
+@page {
+  size: A4;
+  margin: 15mm 16mm 16mm 16mm;
+  @bottom-center {
+    content: "VaultScope · IPsec VPN Security Assessment · page " counter(page) " of " counter(pages);
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 8pt;
+    color: #8a8f98;
+  }
+}
+
+:root {
+  --ink: #1d1d1f;
+  --muted: #6e6e73;
+  --hairline: #d2d2d7;
+  --critical: #b3261e;
+  --high: #c2410c;
+  --medium: #a16207;
+  --low: #3f6212;
+  --safe: #1a7f4b;
+}
+
+body {
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 9.5pt;
+  line-height: 1.45;
+  color: var(--ink);
+  margin: 0;
+}
+
+h1 { font-size: 17.5pt; letter-spacing: -0.4pt; margin: 0 0 2mm; }
+h2 { font-size: 12pt; letter-spacing: -0.2pt; margin: 6mm 0 2mm; padding-bottom: 1.5mm; border-bottom: 0.5pt solid var(--hairline); }
+h3 { font-size: 10pt; margin: 4mm 0 1.5mm; }
+
+.masthead { border-bottom: 1.5pt solid var(--ink); padding-bottom: 2.5mm; margin-bottom: 4mm; }
+.masthead .meta { color: var(--muted); font-size: 8.5pt; }
+
+.score-band { margin: 4mm 0 3mm; }
+.score-number { font-size: 30pt; font-weight: 300; letter-spacing: -1.2pt; line-height: 1.05; display: inline-block; vertical-align: middle; margin-right: 5mm; }
+.score-band > div { display: inline-block; vertical-align: middle; }
+.score-caption { color: var(--muted); font-size: 8.5pt; }
+
+table { width: 100%; border-collapse: collapse; margin: 2mm 0 4mm; }
+th, td { text-align: left; padding: 1.6mm 2mm; border-bottom: 0.5pt solid var(--hairline); vertical-align: top; }
+th { font-size: 8pt; text-transform: uppercase; letter-spacing: 0.4pt; color: var(--muted); font-weight: 600; }
+td { font-size: 8.5pt; }
+
+.sev { font-weight: 600; font-size: 8pt; letter-spacing: 0.3pt; }
+.sev-CRITICAL { color: var(--critical); }
+.sev-HIGH { color: var(--high); }
+.sev-MEDIUM { color: var(--medium); }
+.sev-LOW { color: var(--low); }
+.sev-SAFE { color: var(--safe); }
+
+code, pre { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 7.8pt; }
+pre {
+  background: #f5f5f7;
+  border: 0.5pt solid var(--hairline);
+  border-radius: 1.5mm;
+  padding: 2.5mm 3mm;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  margin: 1.5mm 0 3mm;
+}
+
+.finding { margin: 0 0 3.2mm; page-break-inside: avoid; }
+.finding-head { display: flex; justify-content: space-between; align-items: baseline; gap: 4mm; }
+.muted { color: var(--muted); }
+.small { font-size: 8pt; }
+.disclosure {
+  page-break-inside: avoid;
+  background: #fff8e6;
+  border-left: 1.5pt solid var(--medium);
+  padding: 2.5mm 3mm;
+  font-size: 8pt;
+  margin: 3mm 0 0;
+}
+.page-break { page-break-before: always; }
