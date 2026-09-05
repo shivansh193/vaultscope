@@ -52,6 +52,7 @@ def test_repo_skeleton_exists(repo_root):
         "reporting",
         "api",
         "frontend",
+        "scripts",
         # dataset + model artifacts
         "data/pcaps",
         "data/labels",
@@ -65,6 +66,7 @@ def test_repo_skeleton_exists(repo_root):
         "tests/classifiers",
         "tests/rules",
         "tests/reporting",
+        "tests/core",
         "tests/api",
         "tests/e2e",
         "tests/fixtures",
