@@ -58,6 +58,14 @@ class PeerPair:
     def exec(self, container: str, *argv: str, check: bool = True):
         return _run(["docker", "exec", container, *argv], check=check)
 
+    def exec_detached(self, container: str, *argv: str) -> None:
+        """Start a long-running server and return immediately.
+
+        `docker exec -d` rather than shell backgrounding: `nohup a; b &` only
+        backgrounds `b`, which silently left servers unstarted.
+        """
+        _run(["docker", "exec", "-d", container, *argv], check=False)
+
     def establish(self, timeout: int = 30) -> None:
         """Load configs on both peers and initiate, waiting for INSTALLED."""
         for peer in (self.responder, self.initiator):
