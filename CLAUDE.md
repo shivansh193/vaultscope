@@ -4,13 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Maintaining this file
 
-After every `git push`, review whether this file is still accurate and update it — new build/lint/test/run commands, changed architecture, new stages implemented, or stack decisions that diverged from the LLD. Keep the "Project status", "Commands", and "Tech stack" sections in sync with what actually exists in the repo.
+After every `git push`, review whether this file is still accurate and update it — new build/lint/test/run commands, changed architecture, new stages implemented, or stack decisions that diverged from the LLD. Keep the "Project status", "Commands", and "Tech stack" sections in sync with what actually exists in the repo. When you change something structural, also update the nearest subtree `CLAUDE.md` in the same commit.
 
 ## Project status
 
-**Scaffolded, no pipeline code yet.** The repo has its Python environment, package skeleton, test tree, and lint/test config in place; every pipeline slice (`core/*`, `reporting/`, `api/`, `testbed/`, `frontend/`) is an empty package awaiting implementation. The only substantive design artifacts are `SIH26160_LLD.md` (Low-Level Design, SIH 2026 PS SIH26160) and `docs/VaultScope_Product_Spec.docx`. Read the LLD first; it is the single source of truth for scope and architecture, and its section numbering is a useful shared vocabulary (e.g. "Stage 4b", "Section 3.6").
+**Pipeline build in progress.** Environment, package skeleton, test tree and lint/test config are in place. Implemented so far:
 
-Work is split across four async slices (P1–P4), grouped into two engineer blocks: Block A (@shivansh193) owns P1+P2 (Stages 0–4b), Block B (@p4ralyn) owns P3+P4 (Stages 4c–6). `README.md` maps each directory to its stage and owner.
+- **Stage 2 — IKE parser** (`core/ike_parser/`, Block A / P2-T1 + P2-T2): `parse_ikev2()` and `parse_ikev1()` reconstruct IKEv2 / IKEv1-phase-1 handshakes into `core.models.VPNSession` (fills the `ike` block). See `core/ike_parser/CLAUDE.md`.
+- **Stage 4c — rule engine** (`core/rules/`, Block B / P3-T1..T3): `evaluate_rules()` + `rules.yaml` + vendor remediation.
+- **Stage 5 — reports** (`reporting/`, Block B / P3-T4..T6): executive/technical reports, JSON/CEF export.
+
+Not yet started: Stage 0 testbed, Stage 1 ingestion, Stage 3 flow features, Stage 4a/4b classifiers, Stage 6 dashboard, the FastAPI app.
+
+The design artifacts are `SIH26160_LLD.md` (Low-Level Design, SIH 2026 PS SIH26160) and `docs/VaultScope_Product_Spec.docx`. Read the LLD first; it is the single source of truth for scope and architecture, and its section numbering is shared vocabulary (e.g. "Stage 4b", "Section 3.6").
+
+Work is split across four async slices (P1–P4), grouped into two engineer blocks: Block A (@shivansh193) owns P1+P2 (Stages 0–4b), Block B (@p4ralyn) owns P3+P4 (Stages 4c–6). `README.md` maps each directory to its stage and owner. Don't edit the other block's directories without coordinating.
 
 ## Commands
 
@@ -26,6 +34,17 @@ ruff check . && ruff format --check .
 ```
 
 `pyproject.toml` sets `pythonpath = ["."]`, so `import core.ike_parser` works with no install step. `tests/test_environment.py` is the environment smoke test — it asserts the directory skeleton, the importable dependency set, and `tshark` on PATH. Keep its skeleton list current when directories are added.
+
+## Working agreement
+
+- **One PR per task ID** from the spec's commit map (`P2-T1`, `P2-T2`, …). Branch `feat/<taskid>-<slug>`, commit subject `feat(<area>): <what>` matching the commit-map line. Every task ships with its mandatory test passing.
+- **Stacked PRs**: a task that builds on an unmerged task branches off that branch, not `main`; rebase onto `main` once the parent merges.
+- Do **not** add `Co-Authored-By: Claude` trailers to commits.
+- Run `pytest -q` and `ruff check . && ruff format --check .` before every commit.
+
+## Subtree guides
+
+- `core/ike_parser/CLAUDE.md` — Stage 2 IKE parser: module map, wire-format gotchas, `IkeParams` mapping, task status.
 
 ## What this system is
 
@@ -52,7 +71,7 @@ Data flows Stage 0 → 6. Stages 4a/4b/4c run in parallel off the parsed session
 
 ## Canonical data model
 
-The persisted per-session record (LLD Section 5) is the contract that glues stages together — the IKE parser, classifiers, rule engine, DB, API, and frontend all agree on this shape. Match its field names and nesting (`ike`, `traffic_prediction`, `security_assessment`, `reports`) rather than inventing new ones. The rule engine's checks (weak cipher, MODP768/1024, IKEv1 Aggressive Mode, PFS off, long SA lifetime, replay protection off) map directly onto `ike.*` fields and are defined as data (YAML/JSON), not hardcoded logic.
+The persisted per-session record (LLD Section 5) is the contract that glues stages together — the IKE parser, classifiers, rule engine, DB, API, and frontend all agree on this shape (`core/models.py`). Match its field names and nesting (`ike`, `traffic_prediction`, `security_assessment`, `reports`) rather than inventing new ones; **do not define a second shape for a session anywhere.** The rule engine's checks (weak cipher, MODP768/1024, IKEv1 Aggressive Mode, PFS off, long SA lifetime, replay protection off) map directly onto `ike.*` fields and are defined as data (YAML/JSON), not hardcoded logic.
 
 ## Tech stack
 
@@ -65,3 +84,9 @@ Python deps are pinned across three manifests: `requirements.txt` (runtime), `re
 - **Report ML honestly.** ESP traffic-type prediction is side-channel inference; accuracy will not be 100%. Produce a confusion matrix rather than overclaiming.
 - **The "WhatsApp" class is a substitution** — it can't run in an isolated lab, so it's approximated with a bursty chat-sized generator. Keep this labeled as such; don't present it as real WhatsApp traffic.
 - **The dataset is lab-clean** (no cross-traffic noise), so real-world accuracy will be lower — treat this as a documented limitation, not something to hide.
+
+## Change log (newest first)
+
+- **P2-T2** IKEv1 / ISAKMP parser — `parse_ikev1()`, Main vs Aggressive Mode detection (ID-payload-in-message-1 signal, not message count), phase-1 crypto extraction. `core/ike_parser/ikev1.py`, `V1_*` constants + `canon_v1_*` in `_transforms.py`.
+- **P2-T1** IKEv2 parser — `parse_ikev2()`, SA_INIT + IKE_AUTH → `core.models.VPNSession`. Pure-`struct` RFC 7296 wire decoder (`_wire.py`), IANA canonicalisation (`_transforms.py`). Widened `core.models.IkeParams.auth_method` to also accept `DSS` / `ECDSA` / `None` (real IKE auth methods beyond the spec's 4-value enum).
+- **Env setup** — repo skeleton per spec §3.2, Python tooling, smoke tests.
