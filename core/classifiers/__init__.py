@@ -3,15 +3,15 @@
 Stage 4b  Traffic-Type Classifier -- the core ML component. Given a Stage 3
           flow feature vector, predict the traffic type inside the tunnel
           (VoIP | Video | Web | Email | ICMP | Chat).
-Stage 4a  Protocol/Crypto Classifier -- RF fallback for captures the
-          deterministic IKE parser cannot fully resolve (P2-T9, later).
+Stage 4a  Protocol/Crypto Classifier -- RF fallback that recovers encryption /
+          D-H group from IKE message *structure* when Stage 2 could not
+          (truncated / malformed captures). ``predict_ike_params(messages)``.
 
-Pipeline hook
--------------
-``core.pipeline`` calls ``predict_traffic_type(features_dict)`` and feeds the
-result straight into ``core.models.TrafficPrediction``. Returns the untrained
-default until ``models/traffic_classifier.pkl`` exists
-(``python -m core.classifiers.train``).
+Pipeline hooks
+--------------
+``core.pipeline`` calls ``predict_traffic_type(features_dict)`` -> feeds
+``core.models.TrafficPrediction``. Both classifiers return a safe default until
+``models/*.pkl`` exist (``python -m core.classifiers.train``).
 """
 
 from __future__ import annotations
@@ -19,11 +19,18 @@ from __future__ import annotations
 import functools
 import logging
 
+from .protocol import ProtocolClassifier, structural_features
 from .traffic import TrafficClassifier
 
 log = logging.getLogger(__name__)
 
-__all__ = ["predict_traffic_type", "TrafficClassifier", "model_info"]
+__all__ = [
+    "predict_traffic_type",
+    "predict_ike_params",
+    "TrafficClassifier",
+    "ProtocolClassifier",
+    "model_info",
+]
 
 _UNTRAINED = {"predicted_type": "Other", "confidence": 0.0, "model_version": "untrained"}
 
@@ -37,6 +44,26 @@ def _model() -> TrafficClassifier | None:
     except Exception:  # a corrupt / incompatible pickle must not sink the pipeline
         log.warning("traffic_classifier.pkl could not be loaded", exc_info=True)
         return None
+
+
+@functools.lru_cache(maxsize=1)
+def _protocol_model() -> ProtocolClassifier | None:
+    try:
+        return ProtocolClassifier.load()
+    except FileNotFoundError:
+        return None
+    except Exception:
+        log.warning("protocol_classifier.pkl could not be loaded", exc_info=True)
+        return None
+
+
+def predict_ike_params(messages) -> dict | None:
+    """Stage 4a: best-guess {encryption, dh_group, confidence, confidence_source}
+    from IKE message structure. ``None`` when the model is not trained."""
+    pc = _protocol_model()
+    if pc is None:
+        return None
+    return pc.predict(structural_features(list(messages)))
 
 
 def predict_traffic_type(features: dict) -> dict:
