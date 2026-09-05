@@ -64,6 +64,7 @@ models/confusion_matrix.json
 # ships in the repo so the pipeline, reports and dashboard work out of the box.
 # `python -m core.classifiers.train` regenerates all four from the real dataset.
 !models/traffic_classifier.pkl
+!models/protocol_classifier.pkl
 !models/eval_metrics.json
 !models/confusion_matrix.json
 !models/feature_importance.png
