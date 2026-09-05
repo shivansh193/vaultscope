@@ -1,0 +1,25 @@
+# Full stack: docker compose up --build, then open http://localhost:3000
+services:
+  backend:
+    build: .
+    volumes:
+      # Analysed captures and rendered reports survive a rebuild.
+      - vaultscope-data:/var/lib/vaultscope
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  frontend:
+    build: ./frontend
+    # 3000 is what the spec's demo asks for; nginx serves on 80 inside.
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  vaultscope-data:
