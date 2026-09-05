@@ -48,6 +48,8 @@ from ._transforms import (
     PAYLOAD_KE,
     PAYLOAD_NOTIFY,
     PAYLOAD_SA,
+    PAYLOAD_SKF,
+    PAYLOAD_VENDOR_ID,
     PROTOCOL_AH,
     PROTOCOL_ESP,
     TRANSFORM_TYPE_DH,
@@ -61,6 +63,7 @@ from ._transforms import (
     canon_prf,
     is_aead_encr,
 )
+from ._vendor_ids import fingerprint_vendor
 from ._wire import IkeMessage, Proposal, WireFormatError, decode_message
 
 _ZERO_SPI = b"\x00" * 8
@@ -85,11 +88,11 @@ class _PcapMessage:
         self.udp_port = udp_port
 
 
-def _read_pcap(path: str | os.PathLike) -> tuple[list[_PcapMessage], bool]:
-    """Return (ike_messages, saw_esp). Non-IKE / malformed frames are skipped;
-    both IKEv1 and IKEv2 messages are kept (callers filter by version).
-    ``saw_esp`` is True if any ESP packet (proto 50 or ESP-in-UDP) was present,
-    which lets a mid-session capture still yield a session id.
+def _read_pcap(path: str | os.PathLike) -> tuple[list[_PcapMessage], list[tuple[int, int]]]:
+    """Return (ike_messages, esp_records). Non-IKE / malformed frames are
+    skipped; both IKEv1 and IKEv2 messages are kept (callers filter by version).
+    ``esp_records`` is ``[(spi, seq), ...]`` for every ESP/AH packet -- used to
+    anchor a mid-session capture and to spot anti-replay being off.
     """
     from scapy.layers.inet import IP, UDP  # noqa: PLC0415  (lazy: keep import light)
     from scapy.layers.inet6 import IPv6  # noqa: PLC0415
@@ -101,7 +104,12 @@ def _read_pcap(path: str | os.PathLike) -> tuple[list[_PcapMessage], bool]:
         ESP = None  # type: ignore[assignment]
 
     out: list[_PcapMessage] = []
-    saw_esp = False
+    esp_records: list[tuple[int, int]] = []  # (spi, seq) for the anti-replay check
+
+    def _record_esp(blob: bytes) -> None:
+        if len(blob) >= 8:
+            spi, seq = struct.unpack_from(">II", blob)
+            esp_records.append((spi, seq))
 
     for pkt in rdpcap(str(path)):
         if IP in pkt:
@@ -112,10 +120,10 @@ def _read_pcap(path: str | os.PathLike) -> tuple[list[_PcapMessage], bool]:
             continue
 
         if ESP is not None and ESP in pkt:
-            saw_esp = True
+            _record_esp(struct.pack(">II", int(pkt[ESP].spi), int(pkt[ESP].seq)))
             continue
-        if IPv6 not in pkt and IP in pkt and pkt[IP].proto == 50:
-            saw_esp = True
+        if IPv6 not in pkt and IP in pkt and pkt[IP].proto in (50, 51):
+            _record_esp(bytes(pkt[IP].payload))
             continue
 
         if UDP not in pkt:
@@ -138,7 +146,7 @@ def _read_pcap(path: str | os.PathLike) -> tuple[list[_PcapMessage], bool]:
             if payload[:4] == _NON_ESP_MARKER:
                 ike_bytes = payload[4:]
             else:
-                saw_esp = True  # ESP-in-UDP keepalive/data
+                _record_esp(payload)  # ESP-in-UDP data / keepalive
                 continue
         else:
             ike_bytes = payload
@@ -159,7 +167,7 @@ def _read_pcap(path: str | os.PathLike) -> tuple[list[_PcapMessage], bool]:
                 4500 if on_4500 else 500,
             )
         )
-    return out, saw_esp
+    return out, esp_records
 
 
 # --------------------------------------------------------------------------- #
@@ -171,11 +179,18 @@ def _normalise(source) -> tuple[list[IkeMessage], dict]:
     Both IKEv1 and IKEv2 messages are returned; ``parse_ikevN`` filters by
     version. Kept in ``ikev2`` for history; ``ikev1`` imports it.
     """
-    ctx: dict = {"ip_version": None, "initiator_ip": None, "responder_ip": None, "saw_esp": False}
+    ctx: dict = {
+        "ip_version": None,
+        "initiator_ip": None,
+        "responder_ip": None,
+        "saw_esp": False,
+        "esp_records": [],
+    }
 
     if isinstance(source, str | os.PathLike):
-        pmsgs, saw_esp = _read_pcap(source)
-        ctx["saw_esp"] = saw_esp
+        pmsgs, esp_records = _read_pcap(source)
+        ctx["saw_esp"] = bool(esp_records)
+        ctx["esp_records"] = esp_records
         if pmsgs:
             ctx["ip_version"] = pmsgs[0].ip_version
             ctx["nat_traversal"] = any(p.udp_port == 4500 for p in pmsgs)
@@ -240,6 +255,48 @@ def _notify_types(msg: IkeMessage) -> list[int]:
         for p in msg.all_payloads()
         if p.type == PAYLOAD_NOTIFY and p.notify_type is not None
     ]
+
+
+# fragment payload types: IKEv2 SKF (RFC 7383) = 53, IKEv1 Cisco = 132
+_FRAGMENT_PAYLOAD_TYPES = (PAYLOAD_SKF, 132)
+# Vendor ID payload: 43 in IKEv2, 13 in IKEv1/ISAKMP
+_VENDOR_ID_PAYLOAD_TYPES = (PAYLOAD_VENDOR_ID, 13)
+
+
+def anti_replay_from_esp(esp_records: list[tuple[int, int]]) -> bool | None:
+    """False when a captured ESP SA never advances its sequence number
+    (anti-replay effectively off, RFC 4303 3.4.3); None when undecidable.
+    Shared by the IKEv1 and IKEv2 analysers."""
+    by_spi: dict[int, list[int]] = {}
+    for spi, seq in esp_records:
+        by_spi.setdefault(spi, []).append(seq)
+    decided: bool | None = None
+    for seqs in by_spi.values():
+        if len(seqs) >= 4:
+            if len(set(seqs)) == 1:  # every packet reuses one sequence number
+                return False
+            decided = True  # this SA does advance -> anti-replay is on
+    return decided
+
+
+def apply_edge_cases(ike: dict, messages: list[IkeMessage], ctx: dict) -> None:
+    """P2-T4: Vendor ID fingerprint, IKE fragmentation flag, ESP anti-replay."""
+    vids = [
+        p.raw.hex()
+        for m in messages
+        for p in m.all_payloads()
+        if p.type in _VENDOR_ID_PAYLOAD_TYPES
+    ]
+    vendor = fingerprint_vendor(vids)
+    if vendor != "unknown":
+        ike["vendor"] = vendor
+
+    if any(p.type in _FRAGMENT_PAYLOAD_TYPES for m in messages for p in m.payloads):
+        ike["fragmented_ike"] = True
+
+    replay = anti_replay_from_esp(ctx.get("esp_records") or [])
+    if replay is False:
+        ike["anti_replay"] = False
 
 
 def _child_sa_payload(msg: IkeMessage):
@@ -326,6 +383,7 @@ def _analyse(messages: list[IkeMessage], ctx: dict) -> VPNSession:
 
     capture_complete = saw_sa_init_response or (saw_sa_init and "encryption" in ike)
     ike["capture_complete"] = capture_complete
+    apply_edge_cases(ike, messages, ctx)
 
     # PFS resolution -- conservative, mirrors spec Section 4 ("CREATE_CHILD_SA:
     # detect KE payload -> PFS enabled; absence of KE -> PFS disabled") and the
@@ -381,6 +439,8 @@ def parse_ikev2_sessions(source) -> list[VPNSession]:
             )
             if ctx.get("ip_version"):
                 ike["ip_version"] = ctx["ip_version"]
+            if anti_replay_from_esp(ctx.get("esp_records") or []) is False:
+                ike["anti_replay"] = False
             return [VPNSession(session_id="esp-only", ike=IkeParams(**ike))]
         return []
     return [_analyse(msgs, ctx) for msgs in _bucket(messages).values()]
