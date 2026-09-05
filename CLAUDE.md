@@ -10,7 +10,7 @@ After every `git push`, review whether this file is still accurate and update it
 
 **Pipeline build in progress.** Environment, package skeleton, test tree and lint/test config are in place. Implemented so far:
 
-- **Stage 2 — IKE parser** (`core/ike_parser/`, Block A / P2-T1 + P2-T2): `parse_ikev2()` and `parse_ikev1()` reconstruct IKEv2 / IKEv1-phase-1 handshakes into `core.models.VPNSession` (fills the `ike` block). See `core/ike_parser/CLAUDE.md`.
+- **Stage 2 — IKE parser** (`core/ike_parser/`, Block A / P2-T1..T3): `parse_ikev2()` and `parse_ikev1()` reconstruct IKEv2 and IKEv1 (Main/Aggressive + Quick Mode) handshakes into `core.models.VPNSession` (fills the `ike` block). See `core/ike_parser/CLAUDE.md`.
 - **Stage 4c — rule engine** (`core/rules/`, Block B / P3-T1..T3): `evaluate_rules()` + `rules.yaml` + vendor remediation.
 - **Stage 5 — reports** (`reporting/`, Block B / P3-T4..T6): executive/technical reports, JSON/CEF export.
 - **Backend API + pipeline** (`api/`, `core/pipeline.py`, `core/anomalies.py`, Block B / P3-T7..T10): every route in spec Section 11, SQLite persistence, cross-session anomaly detection, and `analyze_capture()` — the one seam onto Block A. P3 is complete.
@@ -98,6 +98,7 @@ Python deps are pinned across three manifests: `requirements.txt` (runtime), `re
 
 ## Change log (newest first)
 
+- **P2-T3** IKEv1 Quick Mode — phase-2 (IPsec SA) cipher/integrity/D-H/encap-mode extraction; PFS from a KE payload or Group Description; QM values override the phase-1 crypto fields (the IPsec SA is what protects data). `_wire` best-effort frames the encrypted QM body for key-logged/decrypted captures. Also fixed a latent P2-T2 gap: a phase-1-only IKEv1 capture now reports `pfs_status="unknown"`, not the model default.
 - **P4-T5..T6** Peer graph and aggregate dashboard — D3 force graph (`PeerGraph`) with peers as nodes coloured by their worst session, draggable, click-through to the filtered table or the session itself; Recharts risk histogram, traffic donut and a threat-matrix heatmap on `/overview`. Chart palettes live in `src/lib/charts.ts`: severity stays a status scale, traffic type gets its own validated categorical scale (Apple's hues failed CVD separation and were replaced). Every chart carries a tooltip and a table of the same numbers.
 - **P4-T2..T4** Upload, session table, drilldown — `UploadDrop` posts to `/ingest` and redirects; `SessionTable` sorts, filters and pages client-side over the capture's sessions; `SessionDrilldown` is a panel, not a route. `CaptureSpectrum` shows the whole capture as one strip of severity segments. Views are scoped to the current `job_id` so a table never mixes captures. Cypress specs from spec Section 9 live in `tests/e2e/` with generated pcap fixtures (`scripts/generate_e2e_fixtures.py`).
 - **P4-T1** Console scaffold — Next.js 16 App Router + TypeScript + Tailwind v4 in `frontend/`, `output: "export"` so nginx serves static files. `src/lib/types.ts` mirrors `core/models.py`, `src/lib/api.ts` is the only place that calls the backend, `src/app/globals.css` holds the Apple-dark design tokens. Vitest for units. See `frontend/CLAUDE.md`.

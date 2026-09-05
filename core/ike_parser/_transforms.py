@@ -323,3 +323,68 @@ def canon_v1_auth_method(method: int | None) -> str | None:
     if 65001 <= method <= 65010 or method in (128, 129, 130, 131):
         return "XAUTH"
     return f"AUTH_METHOD_{method}"
+
+
+# --- IKEv1 Phase 2 / Quick Mode  (RFC 2407 - the IPSEC DOI) ------------------
+# Quick Mode SA attributes are numbered DIFFERENTLY from phase 1, and the
+# transform *id* itself is the ESP/AH cipher (phase 1's transform id is always
+# KEY_IKE=1 and the cipher rides in an attribute).
+
+# IPSEC ESP transform identifiers (RFC 2407 section 4.4.4 + IANA additions)
+_V1_ESP_NAMES = {
+    2: "DES-CBC",
+    3: "3DES-CBC",
+    4: "DES-IV32",
+    5: "RC5-CBC",
+    6: "IDEA-CBC",
+    7: "CAST-CBC",
+    8: "BLOWFISH-CBC",
+    10: "DES-IV64",
+    11: "NULL",
+}
+
+
+def canon_v1_esp_encryption(transform_id: int, key_length: int | None) -> str:
+    kl = key_length
+    if transform_id in (12,):  # ENCR_AES_CBC
+        return f"AES-{kl or 128}-CBC"
+    if transform_id == 13:  # ENCR_AES_CTR
+        return f"AES-{kl or 128}-CTR"
+    if transform_id in (18, 19, 20):  # ENCR_AES_GCM_{8,12,16}
+        return f"AES-{kl or 128}-GCM"
+    if transform_id in (14, 15, 16):  # ENCR_AES_CCM_{8,12,16}
+        return f"AES-{kl or 128}-CCM"
+    return _V1_ESP_NAMES.get(transform_id, f"ESP_{transform_id}")
+
+
+# Quick Mode SA attribute types (RFC 2407 section 4.5)
+V1_P2_ATTR_LIFE_TYPE = 1
+V1_P2_ATTR_LIFE_DURATION = 2
+V1_P2_ATTR_GROUP_DESC = 3
+V1_P2_ATTR_ENCAP_MODE = 4
+V1_P2_ATTR_AUTH_ALG = 5
+V1_P2_ATTR_KEY_LENGTH = 6
+
+# Encapsulation Mode values (RFC 2407 section 4.5 + RFC 3947 NAT-T)
+V1_ENCAP_TUNNEL = 1
+V1_ENCAP_TRANSPORT = 2
+V1_ENCAP_UDP_TUNNEL = 3
+V1_ENCAP_UDP_TRANSPORT = 4
+
+# IPSEC AH/ESP Authentication Algorithm (RFC 2407 section 4.5)
+_V1_ESP_AUTH_NAMES = {
+    1: "HMAC-MD5",
+    2: "HMAC-SHA1",
+    3: "DES-MAC",
+    5: "HMAC-SHA256",
+    6: "HMAC-SHA384",
+    7: "HMAC-SHA512",
+    8: "AES-XCBC",
+    9: "AES-CMAC",
+}
+
+
+def canon_v1_esp_integrity(auth_alg: int | None) -> str | None:
+    if auth_alg is None:
+        return None
+    return _V1_ESP_AUTH_NAMES.get(auth_alg, f"AUTH_{auth_alg}")

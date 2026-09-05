@@ -21,6 +21,7 @@ from core.ike_parser._transforms import (
     EXCHANGE_IKE_SA_INIT,
     EXCHANGE_V1_AGGRESSIVE,
     EXCHANGE_V1_IDENTITY_PROTECT,
+    EXCHANGE_V1_QUICK,
     IKE_VERSION_1,
     NOTIFY_NAT_DETECTION_DESTINATION_IP,
     NOTIFY_NAT_DETECTION_SOURCE_IP,
@@ -49,7 +50,14 @@ from core.ike_parser._transforms import (
     V1_ATTR_LIFE_DURATION,
     V1_ATTR_LIFE_TYPE,
     V1_DOI_IPSEC,
+    V1_FLAG_ENCRYPTION,
     V1_LIFE_TYPE_SECONDS,
+    V1_P2_ATTR_AUTH_ALG,
+    V1_P2_ATTR_ENCAP_MODE,
+    V1_P2_ATTR_GROUP_DESC,
+    V1_P2_ATTR_KEY_LENGTH,
+    V1_P2_ATTR_LIFE_DURATION,
+    V1_P2_ATTR_LIFE_TYPE,
     V1_PAYLOAD_HASH,
     V1_PAYLOAD_ID,
     V1_PAYLOAD_KE,
@@ -479,3 +487,66 @@ def v1_main_mode_with_retransmit(*, sa: bytes | None = None) -> list[bytes]:
     """Main Mode 1, 1 (retransmit), 2 -- 3 messages, but not Aggressive Mode."""
     mm1, mm2 = v1_main_mode(sa=sa, with_vendor_id=False)
     return [mm1, mm1, mm2]
+
+
+# --- IKEv1 Phase 2 / Quick Mode (P2-T3) --------------------------------------
+def v1_phase2_sa(
+    *,
+    esp_id: int = 12,  # ENCR_AES_CBC
+    keylen: int | None = 128,
+    auth_alg: int = 2,  # HMAC-SHA1
+    group: int | None = None,  # set -> PFS with this D-H group
+    encap: int = 1,  # 1 = tunnel, 2 = transport
+    life_sec: int | None = 3600,
+) -> bytes:
+    """A Quick Mode (phase-2) ISAKMP SA payload body: DOI + Situation + 1 ESP
+    proposal / 1 transform. The transform *id* is the ESP cipher; attributes
+    use phase-2 numbering (RFC 2407 section 4.5)."""
+    attrs = _v1_tv(V1_P2_ATTR_AUTH_ALG, auth_alg) + _v1_tv(V1_P2_ATTR_ENCAP_MODE, encap)
+    if keylen is not None:
+        attrs += _v1_tv(V1_P2_ATTR_KEY_LENGTH, keylen)
+    if group is not None:
+        attrs += _v1_tv(V1_P2_ATTR_GROUP_DESC, group)
+    if life_sec is not None:
+        attrs += _v1_tv(V1_P2_ATTR_LIFE_TYPE, V1_LIFE_TYPE_SECONDS)
+        attrs += struct.pack(">HH", V1_P2_ATTR_LIFE_DURATION, 4) + struct.pack(">I", life_sec)
+
+    # transform: generic hdr(next=0) + [tf#=1, tf-id=<ESP cipher>, 2 reserved] + attrs
+    tf_body = struct.pack(">BBH", 1, esp_id, 0) + attrs
+    transform = struct.pack(">BBH", 0, 0, 4 + len(tf_body)) + tf_body
+    # proposal: generic hdr + [prop#=1, proto=3 ESP, spi_size=4, #tf=1] + SPI + transform
+    prop_body = struct.pack(">BBBB", 1, 3, 4, 1) + b"\xde\xad\xbe\xef" + transform
+    proposal = struct.pack(">BBH", 0, 0, 4 + len(prop_body)) + prop_body
+    return struct.pack(">II", V1_DOI_IPSEC, 1) + proposal
+
+
+def v1_quick_mode(
+    *,
+    sa: bytes | None = None,
+    with_ke: bool = False,
+    message_id: int = 0x0A0B0C0D,
+) -> list[bytes]:
+    """Quick Mode message 1: HASH + SA + Nonce [+ KE] + IDci + IDcr.
+
+    The ISAKMP ENCRYPTION flag is set (as on the wire); the payload chain is
+    left in the clear, mirroring a key-logged / tshark-decrypted capture.
+    """
+    sa = sa if sa is not None else v1_phase2_sa()
+    payloads: list[tuple[int, bytes]] = [
+        (V1_PAYLOAD_HASH, _v1_hash_payload()),
+        (V1_PAYLOAD_SA, sa),
+        (V1_PAYLOAD_NONCE, _v1_nonce()),
+    ]
+    if with_ke:
+        payloads.append((V1_PAYLOAD_KE, _v1_ke()))
+    payloads.append((V1_PAYLOAD_ID, _v1_id_ipv4(b"\x0a\x00\x00\x00")))
+    payloads.append((V1_PAYLOAD_ID, _v1_id_ipv4(b"\x0a\x00\x01\x00")))
+    qm1 = _v1_message(EXCHANGE_V1_QUICK, message_id, payloads, flags=V1_FLAG_ENCRYPTION)
+    return [qm1]
+
+
+def v1_main_then_quick(
+    *, p1_sa: bytes | None = None, p2_sa: bytes | None = None, with_ke: bool = False
+) -> list[bytes]:
+    """A full IKEv1 capture: Main Mode 1-2 then a Quick Mode message."""
+    return v1_main_mode(sa=p1_sa) + v1_quick_mode(sa=p2_sa, with_ke=with_ke)
