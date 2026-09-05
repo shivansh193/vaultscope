@@ -9,6 +9,7 @@ import type {
   AnomalyEvent,
   Health,
   IngestResult,
+  ModelMetrics,
   SessionDiff,
   Severity,
   VPNSession,
@@ -48,6 +49,8 @@ function query(params: Record<string, string | number | undefined>): string {
 }
 
 export const health = () => request<Health>("/health");
+
+export const modelMetrics = () => request<ModelMetrics>("/model/metrics");
 
 export function ingest(file: File): Promise<IngestResult> {
   const body = new FormData();
