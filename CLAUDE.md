@@ -13,8 +13,11 @@ After every `git push`, review whether this file is still accurate and update it
 - **Stage 2 — IKE parser** (`core/ike_parser/`, Block A / P2-T1..T3): `parse_ikev2()` and `parse_ikev1()` reconstruct IKEv2 and IKEv1 (Main/Aggressive + Quick Mode) handshakes into `core.models.VPNSession` (fills the `ike` block). See `core/ike_parser/CLAUDE.md`.
 - **Stage 4c — rule engine** (`core/rules/`, Block B / P3-T1..T3): `evaluate_rules()` + `rules.yaml` + vendor remediation.
 - **Stage 5 — reports** (`reporting/`, Block B / P3-T4..T6): executive/technical reports, JSON/CEF export.
+- **Backend API + pipeline** (`api/`, `core/pipeline.py`, `core/anomalies.py`, Block B / P3-T7..T10): every route in spec Section 11, SQLite persistence, cross-session anomaly detection, and `analyze_capture()` — the one seam onto Block A. P3 is complete.
 
-Not yet started: Stage 0 testbed, Stage 1 ingestion, Stage 3 flow features, Stage 4a/4b classifiers, Stage 6 dashboard, the FastAPI app.
+- **Stage 6 — dashboard** (`frontend/`, Block B / P4-T1..T6): Next.js console — capture upload, session table, drilldown panel, D3 peer graph, aggregate charts. Live mode, export and diff land in P4-T7..T9.
+
+Not yet started: Stage 0 testbed, Stage 1 ingestion, Stage 3 flow features, Stage 4a/4b classifiers.
 
 The design artifacts are `SIH26160_LLD.md` (Low-Level Design, SIH 2026 PS SIH26160) and `docs/VaultScope_Product_Spec.docx`. Read the LLD first; it is the single source of truth for scope and architecture, and its section numbering is shared vocabulary (e.g. "Stage 4b", "Section 3.6").
 
@@ -31,7 +34,14 @@ pytest                      # whole suite from repo root
 pytest tests/ike_parser     # one slice
 pytest -m "not slow"        # skip tests needing the full dataset / trained model
 ruff check . && ruff format --check .
+
+uvicorn api.main:app --reload   # backend on :8000; Swagger UI at /docs
+python scripts/generate_mock_data.py   # regenerate data/mock/*.json
+
+cd frontend && npm install && npm run dev   # console on :3000; see frontend/CLAUDE.md
 ```
+
+`VAULTSCOPE_DB` overrides the SQLite path (default `vaultscope.sqlite` at the repo root) and `VAULTSCOPE_REPORT_DIR` the report output directory; the API tests set both to a `tmp_path`.
 
 `pyproject.toml` sets `pythonpath = ["."]`, so `import core.ike_parser` works with no install step. `tests/test_environment.py` is the environment smoke test — it asserts the directory skeleton, the importable dependency set, and `tshark` on PATH. Keep its skeleton list current when directories are added.
 
@@ -44,6 +54,7 @@ ruff check . && ruff format --check .
 
 ## Subtree guides
 
+- `frontend/CLAUDE.md` — Stage 6 console: commands, stack divergences from the LLD, design tokens.
 - `core/ike_parser/CLAUDE.md` — Stage 2 IKE parser: module map, wire-format gotchas, `IkeParams` mapping, task status.
 
 ## What this system is
@@ -75,7 +86,7 @@ The persisted per-session record (LLD Section 5) is the contract that glues stag
 
 ## Tech stack
 
-Backend FastAPI; DB SQLite (hackathon) / PostgreSQL (scale); ML scikit-learn (RandomForest/XGBoost baseline, optional PyTorch 1D-CNN stretch); reports Jinja2 + WeasyPrint/ReportLab; frontend React/Tailwind/Recharts; whole stack containerized via Docker Compose.
+Backend FastAPI; DB SQLite (hackathon) / PostgreSQL (scale); ML scikit-learn (RandomForest/XGBoost baseline, optional PyTorch 1D-CNN stretch); reports Jinja2 + WeasyPrint/ReportLab; frontend Next.js (App Router, static export) + Tailwind v4 + Recharts + D3, tested with Vitest; whole stack containerized via Docker Compose.
 
 Python deps are pinned across three manifests: `requirements.txt` (runtime), `requirements-dev.txt` (adds pytest/ruff/httpx), and `requirements-stretch.txt` (`torch`, `nfstream` — install only when working that stretch goal; `nfstream` is an accelerator, the custom scapy aggregator is the primary Stage 3 path). `requirements.lock.txt` is a known-good `pip freeze` to fall back on if resolution conflicts. The frontend and DB layers have no manifest yet.
 
@@ -88,6 +99,10 @@ Python deps are pinned across three manifests: `requirements.txt` (runtime), `re
 ## Change log (newest first)
 
 - **P2-T3** IKEv1 Quick Mode — phase-2 (IPsec SA) cipher/integrity/D-H/encap-mode extraction; PFS from a KE payload or Group Description; QM values override the phase-1 crypto fields (the IPsec SA is what protects data). `_wire` best-effort frames the encrypted QM body for key-logged/decrypted captures. Also fixed a latent P2-T2 gap: a phase-1-only IKEv1 capture now reports `pfs_status="unknown"`, not the model default.
+- **P4-T5..T6** Peer graph and aggregate dashboard — D3 force graph (`PeerGraph`) with peers as nodes coloured by their worst session, draggable, click-through to the filtered table or the session itself; Recharts risk histogram, traffic donut and a threat-matrix heatmap on `/overview`. Chart palettes live in `src/lib/charts.ts`: severity stays a status scale, traffic type gets its own validated categorical scale (Apple's hues failed CVD separation and were replaced). Every chart carries a tooltip and a table of the same numbers.
+- **P4-T2..T4** Upload, session table, drilldown — `UploadDrop` posts to `/ingest` and redirects; `SessionTable` sorts, filters and pages client-side over the capture's sessions; `SessionDrilldown` is a panel, not a route. `CaptureSpectrum` shows the whole capture as one strip of severity segments. Views are scoped to the current `job_id` so a table never mixes captures. Cypress specs from spec Section 9 live in `tests/e2e/` with generated pcap fixtures (`scripts/generate_e2e_fixtures.py`).
+- **P4-T1** Console scaffold — Next.js 16 App Router + TypeScript + Tailwind v4 in `frontend/`, `output: "export"` so nginx serves static files. `src/lib/types.ts` mirrors `core/models.py`, `src/lib/api.ts` is the only place that calls the backend, `src/app/globals.css` holds the Apple-dark design tokens. Vitest for units. See `frontend/CLAUDE.md`.
+- **P3-T7..T10** FastAPI backend, pipeline, SQLite store, anomalies — `api/main.py` (spec Section 11 routes + `/ws/live`), `api/store.py`, `core/pipeline.py`, `core/anomalies.py`. `analyze_capture()` probes each Block A stage independently and falls back to FIXTURE MODE off `data/mock/sessions.json`, stamping `capture_complete=False` / `model_version="fixture"`. Both `parse_ikev2_sessions` and `parse_ikev1_sessions` are called per capture — they already emit canonical `VPNSession`, so the pipeline adds Stage 3/4b/4c on top rather than reshaping the record. `pyproject.toml`: FastAPI argument-default markers exempted from ruff's B008.
 - **P2-T2** IKEv1 / ISAKMP parser — `parse_ikev1()`, Main vs Aggressive Mode detection (ID-payload-in-message-1 signal, not message count), phase-1 crypto extraction. `core/ike_parser/ikev1.py`, `V1_*` constants + `canon_v1_*` in `_transforms.py`.
 - **P2-T1** IKEv2 parser — `parse_ikev2()`, SA_INIT + IKE_AUTH → `core.models.VPNSession`. Pure-`struct` RFC 7296 wire decoder (`_wire.py`), IANA canonicalisation (`_transforms.py`). Widened `core.models.IkeParams.auth_method` to also accept `DSS` / `ECDSA` / `None` (real IKE auth methods beyond the spec's 4-value enum).
 - **Env setup** — repo skeleton per spec §3.2, Python tooling, smoke tests.
