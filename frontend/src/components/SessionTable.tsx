@@ -24,15 +24,16 @@ const COLUMNS: { key: SortKey | null; label: string; testId?: string }[] = [
 export function SessionTable({
   sessions,
   sort,
-  direction,
+  direction = "asc",
   onSort,
   onSelect,
   selected,
 }: {
   sessions: VPNSession[];
-  sort: SortKey;
-  direction: SortDirection;
-  onSort: (key: SortKey) => void;
+  /** Omitted when the rows are in an order no column owns -- the live stream. */
+  sort?: SortKey;
+  direction?: SortDirection;
+  onSort?: (key: SortKey) => void;
   onSelect: (session: VPNSession) => void;
   selected?: string;
 }) {
@@ -61,7 +62,7 @@ export function SessionTable({
                 <button
                   type="button"
                   data-testid={testId}
-                  onClick={() => onSort(key)}
+                  onClick={() => onSort?.(key)}
                   className="inline-flex items-center gap-1 hover:text-label"
                 >
                   {label}
