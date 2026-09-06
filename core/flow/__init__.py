@@ -23,13 +23,17 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 from ._capture import read_esp_packets
 from .features import FEATURE_NAMES, Packet, feature_vector
 
 __all__ = [
+    "busiest_flow",
     "extract_features",
     "extract_features_by_flow",
+    "extract_flows",
+    "Flow",
     "feature_vector",
     "FEATURE_NAMES",
     "Packet",
@@ -38,7 +42,7 @@ __all__ = [
 
 def _packets(source) -> list[Packet]:
     if isinstance(source, str | os.PathLike):
-        return [pkt for _spi, pkt in read_esp_packets(source)]
+        return [pkt for _spi, _peers, pkt in read_esp_packets(source)]
     if isinstance(source, Iterable):
         return list(source)
     raise TypeError(f"unsupported flow source: {type(source)!r}")
@@ -59,8 +63,48 @@ def extract_features_by_flow(source) -> dict[str, dict[str, float]]:
     if not isinstance(source, str | os.PathLike):
         return {"all": feature_vector(_packets(source))}
 
-    by_spi: dict[str, list[Packet]] = {}
-    for spi, pkt in read_esp_packets(source):
+    return {spi: flow.features for spi, flow in extract_flows(source).items()}
+
+
+@dataclass(frozen=True)
+class Flow:
+    """One ESP SA's Stage 3 vector, with the peers that carried it."""
+
+    features: dict[str, float]
+    peers: frozenset[str]
+
+
+def extract_flows(source) -> dict[str, Flow]:
+    """Per-SA feature vectors *and* their peer pairs, from one pass over the file.
+
+    Stage 4b only needs the vectors, but anything joining a flow back to the
+    IKE session that set it up needs the peers too -- SPIs are negotiated
+    inside the encrypted exchange, so the address pair is the only link. Both
+    come off the same walk; asking for them separately costs a second decode of
+    the whole capture.
+    """
+    if not isinstance(source, str | os.PathLike):
+        return {"all": Flow(feature_vector(_packets(source)), frozenset())}
+
+    packets: dict[str, list[Packet]] = {}
+    peers: dict[str, frozenset[str]] = {}
+    for spi, pair, pkt in read_esp_packets(source):
         key = f"{spi:08x}" if spi is not None else "unknown"
-        by_spi.setdefault(key, []).append(pkt)
-    return {spi: feature_vector(pkts) for spi, pkts in by_spi.items()}
+        packets.setdefault(key, []).append(pkt)
+        peers.setdefault(key, pair)
+    return {spi: Flow(feature_vector(pkts), peers[spi]) for spi, pkts in packets.items()}
+
+
+def busiest_flow(flows: dict[str, Flow], peers: frozenset[str] | None = None) -> Flow | None:
+    """The flow carrying the most packets, optionally restricted to one peer pair.
+
+    "The largest ESP flow is the traffic we care about" is a rule the pipeline,
+    the training-table builder and the tests all rely on; it lives here so it
+    is stated once.
+    """
+    candidates = [
+        flow
+        for flow in flows.values()
+        if flow.features.get("pkt_total", 0) > 0 and (peers is None or flow.peers == peers)
+    ]
+    return max(candidates, key=lambda flow: flow.features["pkt_total"], default=None)

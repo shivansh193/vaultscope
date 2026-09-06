@@ -20,7 +20,7 @@ import json
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 from core.models import FlowFeatures, TrafficPrediction, VPNSession
 from core.rules.engine import evaluate_rules
@@ -48,51 +48,6 @@ def parser_available() -> bool:
     return any(_load("core.ike_parser", name) for name in PARSE_ENTRY_POINTS)
 
 
-def _esp_peers_by_spi(path: Path) -> dict[str, frozenset[str]]:
-    """Map each ESP SPI to the address pair carrying it.
-
-    ESP SPIs are negotiated inside the encrypted exchange, so they cannot be
-    derived from the IKE messages -- the peer pair is the only link between a
-    parsed session and its data plane.
-    """
-    try:
-        from scapy.layers.inet import IP, UDP
-        from scapy.layers.inet6 import IPv6
-        from scapy.utils import rdpcap
-    except Exception:  # pragma: no cover - scapy always present in practice
-        return {}
-
-    import struct
-
-    peers: dict[str, frozenset[str]] = {}
-    try:
-        packets = rdpcap(str(path))
-    except Exception:
-        return {}
-
-    for packet in packets:
-        if IP in packet:
-            ip, proto = packet[IP], packet[IP].proto
-        elif IPv6 in packet:
-            ip, proto = packet[IPv6], packet[IPv6].nh
-        else:
-            continue
-
-        payload = b""
-        if proto in (50, 51):
-            payload = bytes(ip.payload)
-        elif UDP in packet and 4500 in (packet[UDP].sport, packet[UDP].dport):
-            raw = bytes(packet[UDP].payload)
-            if raw[:4] != b"\x00\x00\x00\x00":
-                payload = raw
-        if len(payload) < 4:
-            continue
-
-        spi = f"{struct.unpack_from('>I', payload)[0]:08x}"
-        peers.setdefault(spi, frozenset({str(ip.src), str(ip.dst)}))
-    return peers
-
-
 def _parse(path: Path) -> list[VPNSession] | None:
     """Every IKE SA in the capture, or None while the parser is unbuilt.
 
@@ -108,24 +63,18 @@ def _parse(path: Path) -> list[VPNSession] | None:
 
     ingest = _load("core.ingestion", "ingest")
     if ingest is not None:
+        by_version = {"IKEv1": parsers[1], "IKEv2": parsers[0]}
         try:
-            result = ingest(str(path))
-            sessions: list[VPNSession] = []
-            for raw in result.sessions:
-                parse = _load(
-                    "core.ike_parser",
-                    "parse_ikev1_sessions"
-                    if raw.ike_version == "IKEv1"
-                    else "parse_ikev2_sessions",
-                )
+            sessions = []
+            for raw in ingest(str(path)).sessions:
+                parse = by_version.get(raw.ike_version)
                 if parse is None:
                     continue
                 for parsed in parse(raw.ike_messages):
                     parsed.initiator_ip = raw.initiator_ip or parsed.initiator_ip
                     parsed.responder_ip = raw.responder_ip or parsed.responder_ip
                     sessions.append(parsed)
-            if sessions:
-                return sessions
+            return sessions
         except Exception:
             log.warning(
                 "Stage 1 ingestion failed on %s; parsing directly", path.name, exc_info=True
@@ -140,17 +89,6 @@ def _parse(path: Path) -> list[VPNSession] | None:
         except Exception:  # one version failing must not sink the other
             log.warning("%s failed on %s", parse.__name__, path.name, exc_info=True)
     return sessions
-
-
-def _flow_features(source: Any) -> FlowFeatures:
-    extract = _load("core.flow", "extract_features")
-    if extract is None:
-        return FlowFeatures()
-    try:
-        return FlowFeatures(**extract(source))
-    except Exception:  # a half-built extractor must not sink the whole capture
-        log.warning("flow feature extraction failed; using empty features", exc_info=True)
-        return FlowFeatures()
 
 
 def _classify(features: FlowFeatures) -> TrafficPrediction:
@@ -178,45 +116,37 @@ def _fixture_sessions() -> list[VPNSession]:
     return sessions
 
 
-def _flow_features_by_flow(path: Path) -> dict[str, dict]:
-    """Stage 3 features per ESP flow, keyed by SPI. Empty if unavailable."""
-    extract = _load("core.flow", "extract_features_by_flow")
+def _flows(path: Path) -> dict:
+    """Stage 3 flows keyed by SPI, each carrying its peer pair. Empty if unavailable."""
+    extract = _load("core.flow", "extract_flows")
     if extract is None:
         return {}
     try:
         return extract(str(path))
     except Exception:
-        log.warning("per-flow extraction failed on %s", path.name, exc_info=True)
+        log.warning("flow extraction failed on %s", path.name, exc_info=True)
         return {}
 
 
-def _session_features(
-    session: VPNSession,
-    by_flow: dict[str, dict],
-    spi_peers: dict[str, frozenset[str]],
-) -> FlowFeatures | None:
-    """This session's own ESP flow, matched to it by peer pair.
+def _features_by_peers(flows: dict) -> dict[frozenset[str], FlowFeatures]:
+    """The busiest flow between each peer pair, as a FlowFeatures.
 
-    Returns None when the capture has no ESP for these peers -- an IKE-only
-    capture -- so the caller can fall back rather than invent a flow.
+    Built once per capture: matching every session against every flow would be
+    quadratic on a capture with many SAs.
     """
-    if not by_flow:
-        return None
-    peers = frozenset({session.initiator_ip, session.responder_ip}) - {""}
-    if len(peers) != 2:
-        return None
+    busiest: dict[frozenset[str], object] = {}
+    for flow in flows.values():
+        if not flow.features.get("pkt_total", 0):
+            continue
+        current = busiest.get(flow.peers)
+        if current is None or flow.features["pkt_total"] > current.features["pkt_total"]:
+            busiest[flow.peers] = flow
 
-    mine = [
-        row
-        for spi, row in by_flow.items()
-        if spi_peers.get(spi) == peers and row.get("pkt_total", 0) > 0
-    ]
-    if not mine:
-        return None
-
-    busiest = max(mine, key=lambda row: row["pkt_total"])
     known = set(FlowFeatures.model_fields)
-    return FlowFeatures(**{k: v for k, v in busiest.items() if k in known})
+    return {
+        peers: FlowFeatures(**{k: v for k, v in flow.features.items() if k in known})
+        for peers, flow in busiest.items()
+    }
 
 
 def analyze_capture(
@@ -242,15 +172,10 @@ def analyze_capture(
         # Stage 3/4b run per SA. A capture with six tunnels in it has six
         # different answers, and stamping one capture-wide vector on every
         # session made them all predict the same traffic type.
-        by_flow = _flow_features_by_flow(path)
-        spi_peers = _esp_peers_by_spi(path) if by_flow else {}
-        capture_wide = None
+        by_peers = _features_by_peers(_flows(path))
         for session in sessions:
-            features = _session_features(session, by_flow, spi_peers)
-            if features is None:
-                if capture_wide is None:
-                    capture_wide = _flow_features(path)
-                features = capture_wide
+            peers = frozenset({session.initiator_ip, session.responder_ip}) - {""}
+            features = by_peers.get(peers) or FlowFeatures()
             session.flow_features = features
             session.traffic_prediction = _classify(features)
 
