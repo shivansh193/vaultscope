@@ -54,14 +54,14 @@ GENERATORS: dict[str, Generator] = {
             "sh",
             "-c",
             "ffmpeg -re -f lavfi -i testsrc=size=640x480:rate=25 -t {duration} "
-            "-c:v libx264 -preset ultrafast -f rtp rtp://{peer}:5004 >/dev/null 2>&1 || true",
+            "-c:v libx264 -preset ultrafast -f rtp rtp://{peer_url}:5004 >/dev/null 2>&1 || true",
         ],
     ),
     "Web": Generator(
         name="curl + nginx",
         description="curl looping fetches of mixed-size objects from nginx",
         server=["nginx", "-g", "daemon off;"],
-        client=_loop("curl -s -o /dev/null http://{peer}/ ; sleep 0.3"),
+        client=_loop("curl -s -o /dev/null http://{peer_url}/ ; sleep 0.3"),
     ),
     "Email": Generator(
         name="swaks",
@@ -104,8 +104,13 @@ def _fill(argv: list[str], peer: str, duration: int) -> list[str]:
     # A server has to outlive its client: it starts first and the client runs
     # for the full duration after the settle.
     server_duration = duration + int(2 * max(g.settle for g in GENERATORS.values())) + 5
+    # {peer_url} for anything that puts the address in a URL: an IPv6 literal
+    # needs brackets there ("http://[fd00::3]/"), and without them ffmpeg and
+    # curl silently produce no traffic on every IPv6 cell.
+    peer_url = f"[{peer}]" if ":" in peer else peer
     return [
-        a.replace("{peer}", peer)
+        a.replace("{peer_url}", peer_url)
+        .replace("{peer}", peer)
         .replace("{server_duration}", str(server_duration))
         .replace("{duration}", str(duration))
         for a in argv

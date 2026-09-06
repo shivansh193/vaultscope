@@ -21,8 +21,29 @@ def test_chat_is_declared_a_substitution_and_nothing_else_is():
 def test_client_argv_templates_take_peer_and_duration():
     for name, generator in GENERATORS.items():
         joined = " ".join(generator.client)
-        assert "{peer}" in joined, f"{name} never addresses the peer"
+        addresses_peer = "{peer}" in joined or "{peer_url}" in joined
+        assert addresses_peer, f"{name} never addresses the peer"
         assert "{duration}" in joined, f"{name} never bounds its runtime"
+
+
+def test_url_generators_bracket_ipv6_literals():
+    """An IPv6 literal in a URL needs brackets. Without them ffmpeg and curl
+    silently emit nothing, and every IPv6 Video and Web cell captures noise."""
+    from testbed.generators.run import _fill
+
+    for name in ("Video", "Web"):
+        filled = " ".join(_fill(GENERATORS[name].client, "fd00:90:12::3", 30))
+        assert "[fd00:90:12::3]" in filled, f"{name} did not bracket the IPv6 peer"
+        assert "//fd00:" not in filled, f"{name} left a bare IPv6 literal in a URL"
+
+
+def test_non_url_generators_do_not_bracket():
+    """ping and sipp take a bare address; brackets would break them."""
+    from testbed.generators.run import _fill
+
+    for name in ("ICMP", "VoIP"):
+        filled = " ".join(_fill(GENERATORS[name].client, "fd00:90:12::3", 30))
+        assert "[fd00:90:12::3]" not in filled, f"{name} must take a bare address"
 
 
 @pytest.mark.slow
