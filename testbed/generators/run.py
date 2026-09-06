@@ -74,7 +74,7 @@ GENERATORS: dict[str, Generator] = {
         server=["python3", "/opt/generators/smtp_sink.py", "{server_duration}"],
         client=_loop(
             "head -c 20000 /dev/urandom | base64 > /tmp/att.txt; "
-            "swaks --to test@example.com --server {peer} --attach /tmp/att.txt "
+            "swaks --to test@example.com --server {peer_url} --attach /tmp/att.txt "
             ">/dev/null 2>&1; sleep 1"
         ),
     ),

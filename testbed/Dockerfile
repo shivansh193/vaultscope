@@ -12,6 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libcharon-extra-plugins \
         iproute2 iputils-ping tcpdump procps \
         curl nginx ffmpeg sip-tester swaks python3 \
+        libio-socket-inet6-perl \
+        netbase \
     && rm -rf /var/lib/apt/lists/*
 
 COPY generators /opt/generators
