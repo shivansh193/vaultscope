@@ -19,6 +19,24 @@ import time
 PORT = 25
 
 
+def _listener(port: int) -> socket.socket:
+    """A socket that accepts both IPv4 and IPv6.
+
+    socket.socket() defaults to AF_INET, which silently refuses every IPv6
+    peer -- the tunnel still carries IKE, so the capture passes a
+    minimum-packet check while containing none of the traffic it is labeled
+    with. Bind AF_INET6 with V6ONLY off so one listener serves both families.
+    """
+    try:
+        server = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+        server.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+    except OSError:  # host without IPv6 at all
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("", port))
+    return server
+
+
 def _serve_one(conn: socket.socket) -> None:
     with conn:
         conn.sendall(b"220 sink.example.com ESMTP\r\n")
@@ -59,9 +77,7 @@ def _serve_one(conn: socket.socket) -> None:
 
 
 def serve(duration: float) -> None:
-    with socket.socket() as server:
-        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server.bind(("", PORT))
+    with _listener(PORT) as server:
         server.listen(8)
         server.settimeout(1.0)
         deadline = time.time() + duration
