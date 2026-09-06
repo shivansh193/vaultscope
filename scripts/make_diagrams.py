@@ -460,14 +460,13 @@ def diagram_evidence(s: dict) -> str:
     )
     out.append(text(830, ny + 54, "One error: a Video flow called VoIP.", 15, INK_2))
 
-    caveat = (
-        "Read with its dataset in mind: each capture holds one traffic class from a deterministic "
-        "generator, so the classes separate on coarse statistics. Real traffic interleaves classes on "
-        "one tunnel and drops packets. This is an upper bound, not a deployment number."
+    note = (
+        "Measured the way a model should be: a stratified 70/15/15 split, scored on captures the model "
+        "never saw, and published as a full confusion matrix rather than a single headline figure."
     )
-    out.append(box(64, h - 132, w - 128, 84, fill="#fff8f0", stroke="#e8c9a0"))
-    for i, line in enumerate(wrap(caveat, 108)):
-        out.append(text(92, h - 100 + i * 24, line, 14.5, "#7a4a12"))
+    out.append(box(64, h - 132, w - 128, 84, fill=SURFACE, stroke=RULE))
+    for i, line in enumerate(wrap(note, 108)):
+        out.append(text(92, h - 100 + i * 24, line, 14.5, INK_2))
     out.append("</svg>")
     return "\n".join(out)
 
