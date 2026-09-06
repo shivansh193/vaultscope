@@ -1,0 +1,24 @@
+{
+  "pcap": "tunnel_aes256cbc_sha256_ecp256_nopfs_ipv6__video.pcap",
+  "traffic_class": "Video",
+  "substitution": false,
+  "generator": "ffmpeg -- ffmpeg streaming a generated test pattern over RTP",
+  "duration_sec": 30,
+  "config": {
+    "version": "IKEv2",
+    "mode": "tunnel",
+    "encryption": "AES-256-CBC",
+    "integrity": "HMAC-SHA256",
+    "dh_group": "ECP256",
+    "pfs_status": "disabled",
+    "auth_method": "PSK",
+    "ip_version": "IPv6",
+    "ike_version": "IKEv2"
+  },
+  "harness_notes": [
+    "IKE observed on UDP 4500: Docker's NAT triggers NAT-T. An artifact of the harness, not of the configuration under test.",
+    "Lab-clean capture: no cross-traffic, so real-world classifier accuracy will be lower."
+  ],
+  "captured_at": "2026-09-06T02:38:02.026763+00:00",
+  "testbed_commit": "2ab61dc"
+}

@@ -1,0 +1,24 @@
+{
+  "pcap": "transport_3descbc_sha1_modp1024_pfs_ipv6__web.pcap",
+  "traffic_class": "Web",
+  "substitution": false,
+  "generator": "curl + nginx -- curl looping fetches of mixed-size objects from nginx",
+  "duration_sec": 30,
+  "config": {
+    "version": "IKEv2",
+    "mode": "transport",
+    "encryption": "3DES-CBC",
+    "integrity": "HMAC-SHA1",
+    "dh_group": "MODP1024",
+    "pfs_status": "enabled",
+    "auth_method": "PSK",
+    "ip_version": "IPv6",
+    "ike_version": "IKEv2"
+  },
+  "harness_notes": [
+    "IKE observed on UDP 4500: Docker's NAT triggers NAT-T. An artifact of the harness, not of the configuration under test.",
+    "Lab-clean capture: no cross-traffic, so real-world classifier accuracy will be lower."
+  ],
+  "captured_at": "2026-09-06T02:38:45.063633+00:00",
+  "testbed_commit": "2ab61dc"
+}

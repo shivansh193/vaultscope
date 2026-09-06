@@ -1,0 +1,24 @@
+{
+  "pcap": "transport_descbc_md5_ecp256_pfs_ipv4__chat.pcap",
+  "traffic_class": "Chat",
+  "substitution": true,
+  "generator": "scripted bursty sender -- Substitution for a real messaging client, which cannot run in an isolated lab: short messages in bursts with human idle gaps.",
+  "duration_sec": 30,
+  "config": {
+    "version": "IKEv2",
+    "mode": "transport",
+    "encryption": "DES-CBC",
+    "integrity": "HMAC-MD5",
+    "dh_group": "ECP256",
+    "pfs_status": "enabled",
+    "auth_method": "PSK",
+    "ip_version": "IPv4",
+    "ike_version": "IKEv2"
+  },
+  "harness_notes": [
+    "IKE observed on UDP 4500: Docker's NAT triggers NAT-T. An artifact of the harness, not of the configuration under test.",
+    "Lab-clean capture: no cross-traffic, so real-world classifier accuracy will be lower."
+  ],
+  "captured_at": "2026-09-06T02:43:41.861609+00:00",
+  "testbed_commit": "2ab61dc"
+}

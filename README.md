@@ -166,8 +166,8 @@ Spec Section 13. Status as of the latest commit on `main`.
 
 | # | Deliverable | Owner | Status |
 |---|---|---|---|
-| 1 | Labeled dataset (>= 300 pcaps + JSONs) | P1 | Generating — regenerate with `python scripts/generate_dataset.py`, see `data/README.md` |
-| 2 | Trained model artifacts | P2 | Present but **bootstrapped on synthetic flows** — `models/eval_metrics.json` reports `source: synthetic-bootstrap`. Retrain on the captured dataset with `python -m core.classifiers.train` once deliverable 1 completes. |
+| 1 | Labeled dataset (>= 300 pcaps + JSONs) | P1 | Done — 300 captures, all six classes, `data/README.md` |
+| 2 | Trained model artifacts | P2 | Done — trained on the captured dataset (`source: pcap-dataset`). Read the accuracy caveat below before quoting the number. |
 | 3 | Working prototype (`docker compose up`) | P4 | Done |
 | 4 | Executive PDF report | P3 | Done |
 | 5 | Technical HTML report | P3 | Done |
@@ -193,6 +193,20 @@ isolated lab, so chat traffic is a scripted generator reproducing the shape —
 short messages in bursts with long idle gaps. Every Chat label carries
 `"substitution": true`. It is not real WhatsApp traffic and must not be
 presented as such.
+
+**The reported classifier accuracy is an upper bound, not a field number.**
+Stage 4b scores macro-F1 **0.98** on a held-out split of the captured dataset,
+up from 0.79 on the synthetic bootstrap it replaced. That number should be read
+with its dataset in mind rather than quoted on its own. Each capture holds
+exactly one traffic class, produced by a deterministic generator at a fixed
+rate, so the classes separate on coarse statistics alone — median packet count
+runs from 36 (Chat) to 1074 (Email), median rate from 1.3 to 36.8 packets per
+second. A model asked to separate those is not being asked a hard question. The
+single error in the held-out set is Video predicted as VoIP, which is the one
+genuinely confusable pair in this data. Real traffic interleaves classes on one
+tunnel, competes for bandwidth, and loses packets; none of that is in the
+dataset, and all of it makes the problem harder. Treat 0.98 as evidence the
+pipeline works end to end, not as an accuracy claim for deployment.
 
 **The dataset is lab-clean.** One tunnel, one traffic class, no competing flows,
 no background noise, no loss. Accuracy measured on it is an upper bound; the
