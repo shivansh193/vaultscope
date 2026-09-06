@@ -166,8 +166,8 @@ Spec Section 13. Status as of the latest commit on `main`.
 
 | # | Deliverable | Owner | Status |
 |---|---|---|---|
-| 1 | Labeled dataset (>= 300 pcaps + JSONs) | P1 | Done — `data/`, see `data/README.md` |
-| 2 | Trained model artifacts | P2 | Not started — `models/` is empty |
+| 1 | Labeled dataset (>= 300 pcaps + JSONs) | P1 | Generating — regenerate with `python scripts/generate_dataset.py`, see `data/README.md` |
+| 2 | Trained model artifacts | P2 | Present but **bootstrapped on synthetic flows** — `models/eval_metrics.json` reports `source: synthetic-bootstrap`. Retrain on the captured dataset with `python -m core.classifiers.train` once deliverable 1 completes. |
 | 3 | Working prototype (`docker compose up`) | P4 | Done |
 | 4 | Executive PDF report | P3 | Done |
 | 5 | Technical HTML report | P3 | Done |
