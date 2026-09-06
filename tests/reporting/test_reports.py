@@ -30,7 +30,7 @@ def test_executive_html_shows_score_and_top_findings(sessions):
 
 
 def test_executive_states_ml_limits(sessions):
-    """CLAUDE.md requires honest ML reporting in anything shown to judges."""
+    """ML claims shown to a reviewer must be reported honestly (LLD callout)."""
     html = render.render_executive_html(sessions)
     assert "probabilistic" in html.lower()
     assert "indicative" in html.lower()
@@ -97,7 +97,7 @@ def test_technical_embeds_confusion_matrix_when_present(sessions, monkeypatch, t
 
 
 def test_technical_discloses_lab_clean_and_chat_substitution(sessions):
-    """Both callouts are mandated by CLAUDE.md."""
+    """Both callouts are mandated by the LLD's disclosed-limitations section."""
     html = render.render_technical_html(sessions)
     assert "lab-clean" in html
     assert "Chat" in html and "approximated" in html

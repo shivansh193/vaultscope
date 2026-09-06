@@ -1,4 +1,4 @@
-# CLAUDE.md — `core/ike_parser/` (Stage 2, Block A / P2)
+# Stage 2 — IKE parser
 
 Reconstructs IKEv1 + IKEv2 handshakes from packets and fills the `ike` block of
 the canonical `core.models.VPNSession`. Spec: §4 "Stage 2 - IKE Parser".
@@ -67,14 +67,6 @@ There is **no `models.py` here** — one session shape lives in `core/models.py`
   message-id-0 message**, not message count (retransmissions change count).
   Exchange-type byte (2/4) is the fallback for mid-capture starts.
 
-## Task status
-
-| Task | State | Notes |
-|---|---|---|
-| P2-T1 IKEv2 parser | ✅ done | SA_INIT + IKE_AUTH → `core.models.VPNSession.ike` |
-| P2-T2 IKEv1 Main/Aggressive | ✅ done | phase-1 params + mode detection |
-| P2-T3 IKEv1 Quick Mode / PFS | ✅ done | KE/group → PFS, phase-2 cipher/integrity, encap → tunnel/transport (overrides phase 1) |
-| P2-T4 edge cases / VID fingerprint | ⬜ next | fragmented IKE (`fragmented_ike`), vendor DB (`vendor`), anti-replay |
 
 ## Known gap found against real captures (P2-T4)
 
