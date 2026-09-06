@@ -1,0 +1,24 @@
+{
+  "pcap": "transport_aes128gcm_modp1024_nopfs_ipv6__email.pcap",
+  "traffic_class": "Email",
+  "substitution": false,
+  "generator": "swaks -- swaks sending messages with base64 attachments over SMTP",
+  "duration_sec": 30,
+  "config": {
+    "version": "IKEv2",
+    "mode": "transport",
+    "encryption": "AES-128-GCM",
+    "integrity": "implicit",
+    "dh_group": "MODP1024",
+    "pfs_status": "disabled",
+    "auth_method": "PSK",
+    "ip_version": "IPv6",
+    "ike_version": "IKEv2"
+  },
+  "harness_notes": [
+    "IKE observed on UDP 4500: Docker's NAT triggers NAT-T. An artifact of the harness, not of the configuration under test.",
+    "Lab-clean capture: no cross-traffic, so real-world classifier accuracy will be lower."
+  ],
+  "captured_at": "2026-09-06T02:53:16.233427+00:00",
+  "testbed_commit": "2ab61dc"
+}

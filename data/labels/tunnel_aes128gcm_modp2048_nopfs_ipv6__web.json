@@ -1,0 +1,24 @@
+{
+  "pcap": "tunnel_aes128gcm_modp2048_nopfs_ipv6__web.pcap",
+  "traffic_class": "Web",
+  "substitution": false,
+  "generator": "curl + nginx -- curl looping fetches of mixed-size objects from nginx",
+  "duration_sec": 30,
+  "config": {
+    "version": "IKEv2",
+    "mode": "tunnel",
+    "encryption": "AES-128-GCM",
+    "integrity": "implicit",
+    "dh_group": "MODP2048",
+    "pfs_status": "disabled",
+    "auth_method": "PSK",
+    "ip_version": "IPv6",
+    "ike_version": "IKEv2"
+  },
+  "harness_notes": [
+    "IKE observed on UDP 4500: Docker's NAT triggers NAT-T. An artifact of the harness, not of the configuration under test.",
+    "Lab-clean capture: no cross-traffic, so real-world classifier accuracy will be lower."
+  ],
+  "captured_at": "2026-09-06T02:54:17.855714+00:00",
+  "testbed_commit": "2ab61dc"
+}

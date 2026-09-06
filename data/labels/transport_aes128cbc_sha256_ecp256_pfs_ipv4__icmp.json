@@ -1,0 +1,24 @@
+{
+  "pcap": "transport_aes128cbc_sha256_ecp256_pfs_ipv4__icmp.pcap",
+  "traffic_class": "ICMP",
+  "substitution": false,
+  "generator": "ping -- ping at a fixed interval",
+  "duration_sec": 30,
+  "config": {
+    "version": "IKEv2",
+    "mode": "transport",
+    "encryption": "AES-128-CBC",
+    "integrity": "HMAC-SHA256",
+    "dh_group": "ECP256",
+    "pfs_status": "enabled",
+    "auth_method": "PSK",
+    "ip_version": "IPv4",
+    "ike_version": "IKEv2"
+  },
+  "harness_notes": [
+    "IKE observed on UDP 4500: Docker's NAT triggers NAT-T. An artifact of the harness, not of the configuration under test.",
+    "Lab-clean capture: no cross-traffic, so real-world classifier accuracy will be lower."
+  ],
+  "captured_at": "2026-09-06T02:41:31.089679+00:00",
+  "testbed_commit": "2ab61dc"
+}
