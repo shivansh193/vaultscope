@@ -13,16 +13,6 @@ Full design: [`docs/VaultScope_Product_Spec.docx`](docs/VaultScope_Product_Spec.
 
 ---
 
-## Team
-
-Two engineers. The spec's four slices (P1–P4, Section 8) are grouped into two
-ownership blocks:
-
-| Block | Owner | Slices | Scope |
-|---|---|---|---|
-| **A** | [@shivansh193](https://github.com/shivansh193) | P1 + P2 | Stages 0–4b: testbed, dataset, ingestion, IKE parser, flow features, ML classifiers |
-| **B** | [@p4ralyn](https://github.com/p4ralyn) | P3 + P4 | Stages 4c–6: rule engine, scoring, reports, FastAPI backend, DB, React dashboard, Docker Compose, demo video |
-
 ## Repository layout
 
 | Path | Stage | Owner |
