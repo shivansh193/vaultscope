@@ -22,6 +22,10 @@ COPY core ./core
 COPY api ./api
 COPY reporting ./reporting
 COPY data/mock ./data/mock
+# The trained Stage 4b/4a artifacts. Without these the container falls back to
+# an untrained classifier: every session reports traffic type "Other" at zero
+# confidence and the technical report loses its confusion matrix.
+COPY models ./models
 
 # The database and rendered reports live on a volume, not in the image.
 ENV VAULTSCOPE_DB=/var/lib/vaultscope/vaultscope.sqlite \
