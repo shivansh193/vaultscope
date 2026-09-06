@@ -86,3 +86,6 @@ reporting/out/
 # Cypress run artifacts
 tests/e2e/screenshots/
 tests/e2e/videos/
+
+# Demo capture is derived from data/pcaps by scripts/make_demo_capture.py
+data/demo/*.pcap

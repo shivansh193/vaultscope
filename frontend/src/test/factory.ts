@@ -48,6 +48,12 @@ export function session(
       fragmented_ike: false,
       capture_complete: true,
       anti_replay: true,
+      confidence_source: "parser",
+      dpd_status: "unknown",
+      dpd_interval_sec: null,
+      retransmit_interval_ms: null,
+      cert: null,
+      msg_sizes: [],
     },
     flow_features: {
       pkt_size_mean: 512,
@@ -81,5 +87,6 @@ export function session(
       ai_confidence: 0.82,
     },
     reports: { executive_pdf: null, technical_html: null, json_export: null, cef_export: null },
+    packet_refs: [],
   };
 }
