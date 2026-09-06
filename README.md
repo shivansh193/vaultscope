@@ -224,13 +224,21 @@ as an observation.
 
 **IKEv2 auth method is not observable.** IKE_AUTH is encrypted, so a PSK tunnel
 currently reports the model default rather than `None`. Tracked as a P2-T4 gap
-in `core/ike_parser/CLAUDE.md`; rules R06 and R13 depend on it.
+in the parser's module docstrings; rules R06 and R13 depend on it.
 
 **The dataset is IKEv2 only.** The parser's IKEv1 path is covered by synthetic
 fixtures, not by real captures.
 
-## Commit convention
+## Documentation
 
-One commit per task ID from spec Section 9, e.g.
-`feat(ike_parser): IKEv2 SA_INIT + IKE_AUTH full VPNSession extraction`.
-Every task ships with its mandatory test passing before merge.
+| Document | What it covers |
+|---|---|
+| `SIH26160_LLD.md` | Low-Level Design — the source of truth for scope and architecture |
+| `docs/VaultScope_Product_Spec.docx` | Product spec: task map, API contract, deliverables |
+| `SUBMISSION.md` | The pitch: problem, what we built, the numbers |
+| `DEMO_SCRIPT.md` | Timed walkthrough for the demo recording |
+| `data/README.md` | The labeled dataset: matrix, naming, label schema |
+
+Per-component notes live in the module docstrings — `testbed/harness.py`,
+`core/ike_parser/`, `core/flow/` and `core/pipeline.py` each explain their own
+gotchas where the code is, not in a parallel document that drifts.

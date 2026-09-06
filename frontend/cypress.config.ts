@@ -3,7 +3,7 @@ import { defineConfig } from "cypress";
 /**
  * The e2e specs live in tests/e2e/ alongside the Python suite, per spec
  * Section 9, and run against a real stack: uvicorn on :8000, next dev on
- * :3000. See tests/e2e/README.md.
+ * :3000, or against `docker compose up` with CYPRESS_apiBase=/api.
  */
 export default defineConfig({
   e2e: {
