@@ -57,3 +57,18 @@ def clean_session() -> VPNSession:
 @pytest.fixture
 def sessions(weak_session, clean_session) -> list[VPNSession]:
     return [weak_session, clean_session]
+
+
+@pytest.fixture
+def anomaly():
+    from core.models import AnomalyEvent
+
+    return AnomalyEvent(
+        anomaly_id="a1",
+        session_id="sess-weak",
+        timestamp="2026-09-05T10:00:01Z",
+        anomaly_type="AGGRESSIVE_MODE_PROBE",
+        severity="HIGH",
+        description="IKEv1 Aggressive Mode exchange to 10.0.0.2 exposes the PSK hash",
+        evidence_pkts=[47, 48],
+    )

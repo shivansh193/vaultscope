@@ -87,8 +87,8 @@ reporting/out/
 tests/e2e/screenshots/
 tests/e2e/videos/
 
-# Demo capture is derived from data/pcaps by scripts/make_demo_capture.py
-data/demo/*.pcap
+# Captures the backend stores per job (evidence for anomaly frame numbers).
+data/captures/
 
 # Diagram source exports, generated outside the repo and not referenced by it
 vaultscope-diagrams/

@@ -171,3 +171,32 @@ class AnomalyEvent(BaseModel):
     severity: Literal["CRITICAL", "HIGH", "MEDIUM"]
     description: str
     evidence_pkts: list[int] = Field(default_factory=list)
+
+
+class CaptureStats(BaseModel):
+    """What a capture held, independent of what the analysis made of it."""
+
+    packets: int = 0
+    ike_packets: int = 0
+    esp_packets: int = 0
+    duration_sec: float = 0.0
+    sessions: int = 0
+    incomplete_sessions: int = 0
+    orphan_esp_packets: int = 0
+
+
+class JobSummary(BaseModel):
+    """One analysed capture -- an upload, or one live-capture run."""
+
+    job_id: str
+    capture_file: str | None = None
+    source: Literal["pcap_upload", "live_nic", "active_probe"] = "pcap_upload"
+    created_at: str = ""
+    stats: CaptureStats = Field(default_factory=CaptureStats)
+    session_count: int = 0
+    severity_counts: dict[str, int] = Field(default_factory=dict)
+    posture_score: int = 100
+    anomaly_count: int = 0
+    # The analysed capture is kept so evidence frame numbers can be checked in
+    # Wireshark. False once it has been pruned or when it was never stored.
+    capture_available: bool = False

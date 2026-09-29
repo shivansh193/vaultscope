@@ -39,19 +39,21 @@ def test_critical_session_has_findings(client, weak_pcap):
 # --- contract coverage beyond the spec's four ------------------------------
 
 
-def test_health_reports_parser_availability(client):
+def test_health_reports_model_rules_and_live_capability(client):
     body = client.get("/health").json()
     assert body["status"] == "ok"
     assert body["version"]
-    assert isinstance(body["parser_available"], bool)
+    assert body["rule_count"] == len(client.get("/rules").json()) == 18
+    assert isinstance(body["model"]["trained"], bool)
+    assert body["live"]["state"] == "idle"
 
 
-def test_ingest_flags_fixture_mode_honestly(client, test_pcap):
-    """Callers must be able to tell a fixture-mode result from a real decode."""
+def test_ingest_reports_what_the_capture_held(client, test_pcap):
     with test_pcap.open("rb") as fh:
         body = client.post("/ingest", files={"file": ("ike.pcap", fh)}).json()
-    health = client.get("/health").json()
-    assert body["fixture_mode"] == (not health["parser_available"])
+    assert body["session_count"] == 5
+    assert body["anomaly_count"] >= 1  # the aggressive-mode SA
+    assert body["stats"]["ike_packets"] == 10
 
 
 def test_sessions_filter_by_severity(client, ingested):
@@ -91,8 +93,7 @@ def test_events_endpoint_returns_anomalies(client, ingested):
 
 def test_events_filter_by_session(client, ingested):
     events = client.get("/events").json()
-    if not events:
-        return
+    assert events
     target = events[0]["session_id"]
     filtered = client.get("/events", params={"session_id": target}).json()
     assert {e["session_id"] for e in filtered} == {target}
@@ -130,6 +131,12 @@ def test_report_json_download_is_valid_json(client, ingested):
     url = client.post(f"/report/{ingested}", json={"type": "json"}).json()["download_url"]
     payload = json.loads(client.get(url).content)
     assert isinstance(payload, list) and payload
+    assert any(record["anomalies"] for record in payload)
+
+
+def test_report_cef_carries_the_jobs_anomalies(client, ingested):
+    url = client.post(f"/report/{ingested}", json={"type": "cef"}).json()["download_url"]
+    assert "|AGGRESSIVE_MODE_PROBE|" in client.get(url).text
 
 
 def test_report_executive_download_is_a_pdf(client, ingested):
@@ -153,28 +160,36 @@ def test_report_download_rejects_path_traversal(client):
 
 def test_openapi_schema_is_generated(client):
     schema = client.get("/openapi.json").json()
-    for route in ("/ingest", "/sessions", "/session/{session_id}", "/events", "/health"):
+    for route in (
+        "/ingest",
+        "/sessions",
+        "/session/{session_id}",
+        "/events",
+        "/health",
+        "/jobs",
+        "/rules",
+        "/live/start",
+    ):
         assert route in schema["paths"], f"{route} missing from Swagger schema"
 
 
 def test_websocket_receives_sessions_on_ingest(client, test_pcap):
     """P3-T8: a new session reaches live subscribers without polling."""
     with client.websocket_connect("/ws/live") as ws:
+        assert ws.receive_json()["type"] == "live"  # current status on connect
         with test_pcap.open("rb") as fh:
-            client.post("/ingest", files={"file": ("ike.pcap", fh)})
-        event = ws.receive_json()
-        assert "session_id" in event
-        assert "security_assessment" in event
+            job = client.post("/ingest", files={"file": ("ike.pcap", fh)}).json()["job_id"]
+        message = ws.receive_json()
+        assert message["type"] == "session" and message["job_id"] == job
+        assert "security_assessment" in message["session"]
 
 
-def test_ingest_does_not_leak_upload_files(client, test_pcap):
-    from api.main import UPLOAD_DIR
-
-    before = set(UPLOAD_DIR.glob("*")) if UPLOAD_DIR.exists() else set()
+def test_ingest_without_retention_leaves_no_file(client, test_pcap, monkeypatch, tmp_path):
+    monkeypatch.setenv("VAULTSCOPE_KEEP_CAPTURES", "0")
     with test_pcap.open("rb") as fh:
-        client.post("/ingest", files={"file": ("ike.pcap", fh)})
-    after = set(UPLOAD_DIR.glob("*")) if UPLOAD_DIR.exists() else set()
-    assert after == before, "uploaded capture was not cleaned up"
+        job = client.post("/ingest", files={"file": ("ike.pcap", fh)}).json()["job_id"]
+    assert list((tmp_path / "captures").glob("*")) == []
+    assert client.get(f"/jobs/{job}").json()["capture_available"] is False
 
 
 def test_diff_returns_whole_sessions_not_just_ids(client, test_pcap):
@@ -186,13 +201,17 @@ def test_diff_returns_whole_sessions_not_just_ids(client, test_pcap):
     healthy = VPNSession(session_id="drifting")
     healthy.security_assessment.risk_score = 90
     healthy.security_assessment.overall_severity = "LOW"
-    store.save_sessions("job-before", [healthy], capture_file="before.pcap")
+    from core.models import CaptureStats
+
+    store.save_analysis("job-before", [healthy], [], CaptureStats(), capture_file="before.pcap")
 
     worse = VPNSession(session_id="drifting")
     worse.security_assessment.risk_score = 20
     worse.security_assessment.overall_severity = "CRITICAL"
     gone_and_new = VPNSession(session_id="brand-new")
-    store.save_sessions("job-after", [worse, gone_and_new], capture_file="after.pcap")
+    store.save_analysis(
+        "job-after", [worse, gone_and_new], [], CaptureStats(), capture_file="after.pcap"
+    )
 
     body = client.get(
         "/sessions/diff", params={"base_job": "job-before", "compare_job": "job-after"}

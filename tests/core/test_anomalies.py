@@ -166,3 +166,13 @@ def test_evidence_pkts_carried_from_session():
     s = _sess2("s1", refs=[47, 48, 49], version="IKEv1", aggressive_mode=True)
     ev = [e for e in detect_anomalies([s]) if e.anomaly_type == "AGGRESSIVE_MODE_PROBE"]
     assert ev[0].evidence_pkts == [47, 48, 49]
+
+
+def test_an_unobserved_suite_is_not_a_downgrade():
+    """`unknown` crypto is neither weak nor strong -- pairing it with a weak
+    session must not read as proposal stripping."""
+    sessions = [
+        _session("weak", encryption="3DES-CBC", dh_group="MODP1024"),
+        _session("blind", encryption="unknown", dh_group="unknown"),
+    ]
+    assert "DOWNGRADE_SUSPECTED" not in _types(detect_anomalies(sessions))

@@ -144,3 +144,39 @@ def test_pdf_embeds_the_requested_sans_font(sessions, tmp_path):
         for ref in page.get("/Resources", {}).get("/Font", {}).values():
             fonts.add(str(ref.get_object().get("/BaseFont")))
     assert not any("Times" in f for f in fonts), f"fell back to a serif face: {fonts}"
+
+
+# --- runtime anomalies reach both reports -------------------------------------
+
+
+def test_technical_lists_anomalies_with_evidence_frames(sessions, anomaly):
+    html = render.render_technical_html(sessions, anomalies=[anomaly])
+    assert "Runtime anomalies" in html
+    assert "AGGRESSIVE_MODE_PROBE" in html
+    assert "47, 48" in html
+
+
+def test_technical_says_so_when_there_are_no_anomalies(sessions):
+    assert "No runtime anomalies detected" in render.render_technical_html(sessions)
+
+
+def test_executive_surfaces_signs_of_attack_in_plain_english(sessions, anomaly):
+    html = render.render_executive_html(sessions, anomalies=[anomaly])
+    assert "Signs of active attack" in html
+    assert render.ANOMALY_PLAIN_ENGLISH["AGGRESSIVE_MODE_PROBE"].split(" -- ")[0] in html
+
+
+def test_executive_with_anomalies_still_fits_two_pages(sessions, anomaly, tmp_path):
+    pdf = render.write_executive_pdf(sessions, tmp_path / "e.pdf", anomalies=[anomaly] * 6)
+    assert len(pypdf.PdfReader(str(pdf)).pages) <= 2
+
+
+def test_every_anomaly_type_has_a_plain_english_gloss():
+    import inspect
+    import re
+
+    import core.anomalies
+
+    emitted = set(re.findall(r'"([A-Z]+(?:_[A-Z]+)+)",', inspect.getsource(core.anomalies)))
+    assert len(emitted) == len(core.anomalies.DETECTORS)
+    assert emitted <= set(render.ANOMALY_PLAIN_ENGLISH)

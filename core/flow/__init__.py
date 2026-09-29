@@ -25,7 +25,6 @@ import os
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from ._capture import read_esp_packets
 from .features import FEATURE_NAMES, Packet, feature_vector
 
 __all__ = [
@@ -33,6 +32,7 @@ __all__ = [
     "extract_features",
     "extract_features_by_flow",
     "extract_flows",
+    "flows_from_esp",
     "Flow",
     "feature_vector",
     "FEATURE_NAMES",
@@ -40,9 +40,33 @@ __all__ = [
 ]
 
 
+def _esp(path) -> list:
+    from core.capture import read_capture  # noqa: PLC0415  (scapy import is slow)
+
+    return read_capture(path).esp
+
+
+def _to_packets(esp) -> list[tuple[int | None, frozenset[str], Packet]]:
+    """``EspFrame``s -> ``(spi, peers, Packet)``.
+
+    Direction is ``+1`` for packets sourced from the first ESP endpoint seen in
+    the list, ``-1`` for the reverse -- the convention the shipped model was
+    trained on, so it must not drift.
+    """
+    up_src = esp[0].src_ip if esp else None
+    return [
+        (
+            e.spi,
+            e.peers,
+            Packet(time=e.time, size=e.size, direction=1 if e.src_ip == up_src else -1),
+        )
+        for e in esp
+    ]
+
+
 def _packets(source) -> list[Packet]:
     if isinstance(source, str | os.PathLike):
-        return [pkt for _spi, _peers, pkt in read_esp_packets(source)]
+        return [pkt for _spi, _peers, pkt in _to_packets(_esp(source))]
     if isinstance(source, Iterable):
         return list(source)
     raise TypeError(f"unsupported flow source: {type(source)!r}")
@@ -85,10 +109,14 @@ def extract_flows(source) -> dict[str, Flow]:
     """
     if not isinstance(source, str | os.PathLike):
         return {"all": Flow(feature_vector(_packets(source)), frozenset())}
+    return flows_from_esp(_esp(source))
 
+
+def flows_from_esp(esp) -> dict[str, Flow]:
+    """Per-SA flows from ``core.capture.EspFrame``s already read by Stage 1."""
     packets: dict[str, list[Packet]] = {}
     peers: dict[str, frozenset[str]] = {}
-    for spi, pair, pkt in read_esp_packets(source):
+    for spi, pair, pkt in _to_packets(list(esp)):
         key = f"{spi:08x}" if spi is not None else "unknown"
         packets.setdefault(key, []).append(pkt)
         peers.setdefault(key, pair)

@@ -58,6 +58,17 @@
   <p class="muted">No security findings. Every assessed session met the configured baseline.</p>
 {% endif %}
 
+{% if anomalies %}
+<h2>Signs of active attack</h2>
+<p class="small">Beyond weak configuration, {{ anomalies|length }} runtime
+anomal{{ 'y was' if anomalies|length == 1 else 'ies were' }} observed in this capture.</p>
+<ul class="small">
+  {% for kind in anomaly_kinds[:3] %}
+  <li><strong>{{ kind.replace('_', ' ').title() }}</strong> &mdash; {{ anomaly_plain_english.get(kind, '') }}</li>
+  {% endfor %}
+</ul>
+{% endif %}
+
 <h2>Recommended action</h2>
 <ol>
   {% for action in actions %}<li>{{ action }}</li>{% endfor %}

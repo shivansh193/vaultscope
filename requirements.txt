@@ -1,8 +1,8 @@
 # VaultScope - full project runtime dependencies (spec Section 6: Tech Stack)
 #
 # Per-slice notes:
-#   P1  ingestion/testbed : pyshark, scapy
-#   P2  parser/flow/ML     : scapy, pyshark, scikit-learn, xgboost, numpy, pandas,
+#   P1  ingestion/testbed : scapy (dumpcap for live capture is a system tool)
+#   P2  parser/flow/ML     : scapy, scikit-learn, xgboost, numpy, pandas,
 #                            matplotlib, joblib
 #   P3  rules/reports/api  : pyyaml, jinja2, weasyprint, reportlab, fastapi, uvicorn
 #
@@ -10,7 +10,6 @@
 
 # --- packet capture & protocol parsing (Stage 1, 2, 3) ---
 scapy==2.6.1
-pyshark==0.6
 
 # --- numerics & data (Stage 3, 4) ---
 numpy==1.26.4

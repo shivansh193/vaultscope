@@ -1,189 +1,150 @@
-"""Full analysis pipeline: capture in, assessed sessions out (P3-T9).
+"""The Analysis module: one capture in, one assessed :class:`Analysis` out.
 
-This module is the ONLY place that knows whether Block A (Stage 1 ingestion,
-Stage 2 IKE parser, Stage 3 flow features, Stage 4a/4b classifiers) exists yet.
-Everything downstream -- the API, the DB, the reports -- consumes
-:func:`analyze_capture` and is unaffected when the real components land.
+    analysis = analyze_capture("capture.pcap")
+    analysis.sessions    # every IKE SA, parsed, classified, scored
+    analysis.anomalies   # cross-session attack indicators, with evidence frames
+    analysis.stats       # what the capture held: packets, duration, IKE/ESP split
 
-Block A is owned by @shivansh193 and lands incrementally. Each stage is probed
-independently, so a capture benefits from the IKE parser as soon as it exists
-even while the classifier is still missing.
-
-When the parser is unavailable the pipeline runs in FIXTURE MODE: sessions come
-from ``data/mock/sessions.json`` rather than the uploaded capture. Fixture-mode
-sessions are stamped ``ike.capture_complete = False`` and
-``traffic_prediction.model_version = "fixture"`` so no caller, report or
-dashboard can mistake them for a real decode.
+The capture is read exactly once (``core.capture``). Stage 1 buckets that read
+into SAs, Stage 2 parses each SA with its own frame numbers, timestamps,
+addresses and ESP, Stage 3 computes flow features from the same ESP frames,
+Stage 4a fills what a truncated handshake hid, Stage 4b infers the tunnel's
+traffic type, Stage 4c scores the session, and the anomaly detectors look
+across the whole capture. Callers -- the API, the live-capture loop, the tests
+-- get the finished result and never assemble a piece of it themselves.
 """
 
-import json
+from __future__ import annotations
+
 import logging
-from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from core.models import FlowFeatures, TrafficPrediction, VPNSession
+from core.anomalies import detect_anomalies
+from core.capture import CaptureRead, read_capture
+from core.classifiers import predict_ike_params, predict_traffic_type
+from core.flow import Flow, busiest_flow, flows_from_esp
+from core.ike_parser import parse_ikev1_sessions, parse_ikev2_sessions
+from core.ike_parser._transforms import EXCHANGE_IKE_SA_INIT
+from core.ingestion import RawSession, bucket
+from core.models import (
+    AnomalyEvent,
+    CaptureStats,
+    FlowFeatures,
+    TrafficPrediction,
+    VPNSession,
+)
 from core.rules.engine import evaluate_rules
 
 log = logging.getLogger(__name__)
 
-MOCK_SESSIONS_PATH = Path(__file__).resolve().parent.parent / "data" / "mock" / "sessions.json"
-
 CaptureSource = Literal["pcap_upload", "live_nic", "active_probe"]
 
+# Stage 4a is a guess from message structure. Below this it is not a useful one.
+PROTOCOL_FALLBACK_MIN_CONFIDENCE = 0.6
+# No ESP means no side-channel to read. Say so rather than classify a zero vector.
+NO_ESP_MODEL_VERSION = "no-esp-observed"
 
-def _load(module: str, attr: str) -> Callable | None:
-    """Return a Block A entry point, or None while that stage is unbuilt."""
+
+@dataclass
+class Analysis:
+    sessions: list[VPNSession] = field(default_factory=list)
+    anomalies: list[AnomalyEvent] = field(default_factory=list)
+    stats: CaptureStats = field(default_factory=CaptureStats)
+
+
+def _parse(raw: RawSession) -> list[VPNSession]:
+    parse = parse_ikev1_sessions if raw.ike_version == "IKEv1" else parse_ikev2_sessions
     try:
-        return getattr(__import__(module, fromlist=[attr]), attr)
-    except (ImportError, AttributeError):
-        return None
-
-
-PARSE_ENTRY_POINTS = ("parse_ikev2_sessions", "parse_ikev1_sessions")
-
-
-def parser_available() -> bool:
-    """True once Block A's Stage 2 parser is importable."""
-    return any(_load("core.ike_parser", name) for name in PARSE_ENTRY_POINTS)
-
-
-def _parse(path: Path) -> list[VPNSession] | None:
-    """Every IKE SA in the capture, or None while the parser is unbuilt.
-
-    Goes through Stage 1 when it is available: the ingestion engine buckets a
-    capture into one RawSession per SA and carries each session's own peer
-    addresses. Calling the parser on the file directly instead collapses a
-    multi-tunnel capture onto whichever peers appeared first, because the
-    parser's IP context is per-capture rather than per-SA.
-    """
-    parsers = [_load("core.ike_parser", name) for name in PARSE_ENTRY_POINTS]
-    if not any(parsers):
-        return None
-
-    ingest = _load("core.ingestion", "ingest")
-    if ingest is not None:
-        by_version = {"IKEv1": parsers[1], "IKEv2": parsers[0]}
-        try:
-            sessions = []
-            for raw in ingest(str(path)).sessions:
-                parse = by_version.get(raw.ike_version)
-                if parse is None:
-                    continue
-                for parsed in parse(raw.ike_messages):
-                    parsed.initiator_ip = raw.initiator_ip or parsed.initiator_ip
-                    parsed.responder_ip = raw.responder_ip or parsed.responder_ip
-                    sessions.append(parsed)
-            return sessions
-        except Exception:
-            log.warning(
-                "Stage 1 ingestion failed on %s; parsing directly", path.name, exc_info=True
-            )
-
-    sessions = []
-    for parse in parsers:
-        if parse is None:
-            continue
-        try:
-            sessions.extend(parse(str(path)))
-        except Exception:  # one version failing must not sink the other
-            log.warning("%s failed on %s", parse.__name__, path.name, exc_info=True)
-    return sessions
-
-
-def _classify(features: FlowFeatures) -> TrafficPrediction:
-    predict = _load("core.classifiers", "predict_traffic_type")
-    if predict is None:
-        return TrafficPrediction()
-    try:
-        return TrafficPrediction(**predict(features.model_dump()))
-    except Exception:
-        log.warning("traffic classification failed; using default prediction", exc_info=True)
-        return TrafficPrediction()
-
-
-def _fixture_sessions() -> list[VPNSession]:
-    """Sessions for FIXTURE MODE -- see the module docstring."""
-    if not MOCK_SESSIONS_PATH.exists():
+        return parse(raw)
+    except Exception:  # one malformed SA must not sink the rest of the capture
+        log.warning("Stage 2 failed on SA %s", raw.session_id, exc_info=True)
         return []
-    records = json.loads(MOCK_SESSIONS_PATH.read_text())
+
+
+def _fill_from_structure(session: VPNSession, raw: RawSession) -> None:
+    """Stage 4a: recover encryption / D-H group the parser could not decode.
+
+    Only ever fills a field that is ``unknown``, only from an IKE_SA_INIT that
+    is actually in the capture, and stamps ``confidence_source`` so every
+    reader can tell an inference from an observation.
+    """
+    ike = session.ike
+    gaps = [f for f in ("encryption", "dh_group") if getattr(ike, f) == "unknown"]
+    if not gaps or not any(m.exchange_type == EXCHANGE_IKE_SA_INIT for m in raw.ike_messages):
+        return
+    guess = predict_ike_params(raw.ike_messages)
+    if not guess or guess["confidence"] < PROTOCOL_FALLBACK_MIN_CONFIDENCE:
+        return
+    for f in gaps:
+        setattr(ike, f, guess[f])
+    ike.confidence_source = "classifier"
+
+
+def _classify(flow: Flow | None) -> tuple[FlowFeatures, TrafficPrediction]:
+    if flow is None:
+        return FlowFeatures(), TrafficPrediction(model_version=NO_ESP_MODEL_VERSION)
+    known = set(FlowFeatures.model_fields)
+    features = FlowFeatures(**{k: v for k, v in flow.features.items() if k in known})
+    return features, TrafficPrediction(**predict_traffic_type(features.model_dump()))
+
+
+def _orphan_sessions(read: CaptureRead, claimed: set[frozenset[str]]) -> list[VPNSession]:
+    """One mid-session record per peer pair whose ESP has no handshake in the capture."""
+    by_peers: dict[frozenset[str], list] = {}
+    for e in read.esp:
+        if e.peers not in claimed:
+            by_peers.setdefault(e.peers, []).append(e)
     sessions = []
-    for record in records:
-        session = VPNSession(**record)
-        session.ike.capture_complete = False
-        session.traffic_prediction.model_version = "fixture"
-        sessions.append(session)
+    for esp in by_peers.values():
+        raw = RawSession(session_id="", ike_version="IKEv2", esp_frames=esp)
+        for session in parse_ikev2_sessions(raw):
+            first = esp[0]
+            session.session_id = f"esp-{first.spi or 0:08x}"
+            session.initiator_ip, session.responder_ip = first.src_ip, first.dst_ip
+            session.packet_refs = [e.frame for e in esp[:20]]
+            sessions.append(session)
     return sessions
 
 
-def _flows(path: Path) -> dict:
-    """Stage 3 flows keyed by SPI, each carrying its peer pair. Empty if unavailable."""
-    extract = _load("core.flow", "extract_flows")
-    if extract is None:
-        return {}
-    try:
-        return extract(str(path))
-    except Exception:
-        log.warning("flow extraction failed on %s", path.name, exc_info=True)
-        return {}
-
-
-def _features_by_peers(flows: dict) -> dict[frozenset[str], FlowFeatures]:
-    """The busiest flow between each peer pair, as a FlowFeatures.
-
-    Built once per capture: matching every session against every flow would be
-    quadratic on a capture with many SAs.
-    """
-    busiest: dict[frozenset[str], object] = {}
-    for flow in flows.values():
-        if not flow.features.get("pkt_total", 0):
-            continue
-        current = busiest.get(flow.peers)
-        if current is None or flow.features["pkt_total"] > current.features["pkt_total"]:
-            busiest[flow.peers] = flow
-
-    known = set(FlowFeatures.model_fields)
-    return {
-        peers: FlowFeatures(**{k: v for k, v in flow.features.items() if k in known})
-        for peers, flow in busiest.items()
-    }
-
-
-def analyze_capture(
-    path: str | Path,
-    source: CaptureSource = "pcap_upload",
-) -> list[VPNSession]:
-    """Analyse one capture end to end and return fully assessed sessions.
-
-    Stage 1/2 -> Stage 3 -> Stage 4a/4b -> Stage 4c -> scored VPNSession.
-    """
+def analyze_capture(path: str | Path, source: CaptureSource = "pcap_upload") -> Analysis:
+    """Analyse one capture end to end."""
     path = Path(path)
-    sessions = _parse(path)
+    read = read_capture(path)
+    ingested = bucket(read)
+    flows = flows_from_esp(read.esp)
 
-    if sessions is None:
-        log.warning(
-            "Block A IKE parser unavailable -- running in FIXTURE MODE. "
-            "Sessions are from %s, not from %s.",
-            MOCK_SESSIONS_PATH.name,
-            path.name,
+    sessions: list[VPNSession] = []
+    for raw in ingested.sessions:
+        for session in _parse(raw):
+            _fill_from_structure(session, raw)
+            session.flow_features, session.traffic_prediction = _classify(
+                busiest_flow(flows, raw.peers)
+            )
+            sessions.append(session)
+
+    for session in _orphan_sessions(read, {raw.peers for raw in ingested.sessions}):
+        session.flow_features, session.traffic_prediction = _classify(
+            busiest_flow(flows, frozenset({session.initiator_ip, session.responder_ip}))
         )
-        sessions = _fixture_sessions()
-    else:
-        # Stage 3/4b run per SA. A capture with six tunnels in it has six
-        # different answers, and stamping one capture-wide vector on every
-        # session made them all predict the same traffic type.
-        by_peers = _features_by_peers(_flows(path))
-        for session in sessions:
-            peers = frozenset({session.initiator_ip, session.responder_ip}) - {""}
-            features = by_peers.get(peers) or FlowFeatures()
-            session.flow_features = features
-            session.traffic_prediction = _classify(features)
+        sessions.append(session)
 
     for session in sessions:
         session.capture_source = source
         session.capture_file = path.name
-        # Stage 4c always runs here: it is pure and depends only on ike.*
         session.security_assessment = evaluate_rules(session)
-        session.security_assessment.ai_confidence = session.traffic_prediction.confidence
 
-    return sessions
+    return Analysis(
+        sessions=sessions,
+        anomalies=detect_anomalies(sessions),
+        stats=CaptureStats(
+            packets=read.packets_seen,
+            ike_packets=len(read.ike),
+            esp_packets=len(read.esp),
+            duration_sec=round(read.duration_sec, 3),
+            sessions=len(sessions),
+            incomplete_sessions=sum(not s.ike.capture_complete for s in sessions),
+            orphan_esp_packets=len(ingested.orphan_esp),
+        ),
+    )

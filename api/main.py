@@ -1,42 +1,107 @@
 """VaultScope FastAPI backend (P3-T7, P3-T8, P3-T9, P3-T10).
 
-Routes follow the API contract in spec Section 11. Swagger UI is auto-generated
-at ``/docs``.
+Routes follow the API contract in spec Section 11, extended with jobs (one
+analysed capture each), the rule table, and live capture. Swagger UI is
+auto-generated at ``/docs``.
+
+Configuration is environment-only so the same image runs in dev, Compose and CI:
+
+    VAULTSCOPE_DB             SQLite file                 (repo/vaultscope.sqlite)
+    VAULTSCOPE_REPORT_DIR     rendered reports            (repo/reporting/out)
+    VAULTSCOPE_CAPTURE_DIR    stored captures             (repo/data/captures)
+    VAULTSCOPE_KEEP_CAPTURES  keep uploads for evidence   (1)
+    VAULTSCOPE_MAX_UPLOAD_MB  upload size cap             (512)
 """
 
 import asyncio
 import contextlib
-import shutil
-import tempfile
+import json
+import os
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    File,
+    HTTPException,
+    Query,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from api import store
-from core import pipeline
-from core.anomalies import detect_anomalies
-from core.models import AnomalyEvent, Severity, VPNSession
+from api import live, store
+from core import live as sources
+from core.classifiers import model_info
+from core.models import (
+    AnomalyEvent,
+    CaptureStats,
+    JobSummary,
+    Severity,
+    VPNSession,
+)
+from core.pipeline import analyze_capture
+from core.rules.engine import load_rules
 from reporting import export, render
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
-REPORT_DIR = Path(__file__).resolve().parent.parent / "reporting" / "out"
-UPLOAD_DIR = Path(tempfile.gettempdir()) / "vaultscope-uploads"
+ROOT = Path(__file__).resolve().parent.parent
+REPORT_DIR = Path(os.environ.get("VAULTSCOPE_REPORT_DIR", ROOT / "reporting" / "out"))
+CAPTURE_DIR = Path(os.environ.get("VAULTSCOPE_CAPTURE_DIR", ROOT / "data" / "captures"))
+DEMO_CAPTURE = ROOT / "data" / "demo" / "demo_capture.pcap"
+_METRICS_PATH = ROOT / "models" / "eval_metrics.json"
+
+
+def _keep_captures() -> bool:
+    return os.environ.get("VAULTSCOPE_KEEP_CAPTURES", "1") not in ("0", "false", "no")
+
+
+def _max_upload_bytes() -> int:
+    return int(float(os.environ.get("VAULTSCOPE_MAX_UPLOAD_MB", "512")) * 1024 * 1024)
+
+
+# First four bytes of every format read_capture accepts: pcap in both byte
+# orders, microsecond and nanosecond, and pcapng's Section Header Block.
+_CAPTURE_MAGIC = {
+    b"\xd4\xc3\xb2\xa1": ".pcap",
+    b"\xa1\xb2\xc3\xd4": ".pcap",
+    b"\x4d\x3c\xb2\xa1": ".pcap",
+    b"\xa1\xb2\x3c\x4d": ".pcap",
+    b"\x0a\x0d\x0d\x0a": ".pcapng",
+}
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    store.init_db()
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
+    yield
+    if _run is not None and _run.status.state == "running":
+        await _run.stop()
+
 
 app = FastAPI(
     title="VaultScope",
     version=VERSION,
-    description="AI-powered IPsec VPN protocol analyzer and security assessment framework.",
+    description=(
+        "AI-powered IPsec VPN protocol analyzer and security assessment framework "
+        "(SIH 2026 · SIH26160). Upload a capture or start a live run; every IKE SA "
+        "comes back parsed, classified and scored, with cross-session attack "
+        "indicators pointing at pcap frame numbers."
+    ),
+    lifespan=lifespan,
 )
 
-# The dashboard is served from a different origin in dev (Vite on :5173) and
-# from nginx in Compose. Wide-open CORS is acceptable for an on-premise
-# analysis tool with no authentication surface; tighten if that changes.
+# The console is served same-origin by nginx in Compose; the dev server on
+# :3000 is a different origin. No cookies or credentials are ever sent, so an
+# open CORS policy exposes nothing a same-origin caller could not already read.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -46,23 +111,42 @@ app.add_middleware(
 )
 
 
-@app.on_event("startup")
-def _startup() -> None:
-    store.init_db()
-    REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+# --- response models -----------------------------------------------------------
 
 
-class IngestResponse(BaseModel):
-    session_count: int
-    job_id: str
-    fixture_mode: bool
+class ModelHealth(BaseModel):
+    trained: bool
+    model_version: str
+    algo: str | None = None
+
+
+class LiveHealth(BaseModel):
+    interface_capture: bool = Field(description="dumpcap is installed on the backend host")
+    replay: bool = Field(description="the bundled demo capture is present for replay")
+    state: str
 
 
 class HealthResponse(BaseModel):
     status: str
     version: str
-    parser_available: bool
+    rule_count: int
+    model: ModelHealth
+    live: LiveHealth
+
+
+class IngestResponse(BaseModel):
+    job_id: str
+    session_count: int
+    anomaly_count: int
+    stats: CaptureStats
+
+
+class Rule(BaseModel):
+    id: str
+    description: str
+    severity: Severity
+    cve: str | None = None
+    standard: str = ""
 
 
 class ReportRequest(BaseModel):
@@ -96,64 +180,176 @@ class DiffResponse(BaseModel):
     degraded: list[DegradedSession]
 
 
-@app.get("/health", response_model=HealthResponse)
+class LiveStartRequest(BaseModel):
+    source: Literal["replay", "interface"] = "replay"
+    interface: str | None = Field(None, description="NIC name, for source=interface")
+    job_id: str | None = Field(
+        None, description="replay this stored job's capture instead of the bundled demo"
+    )
+    speed: float = Field(20.0, gt=0, le=1000, description="replay time compression")
+
+
+class Interface(BaseModel):
+    name: str
+    description: str = ""
+
+
+# --- system -----------------------------------------------------------------------
+
+
+@app.get("/health", response_model=HealthResponse, tags=["system"])
 def health() -> HealthResponse:
-    """`parser_available` is false while Block A's Stage 2 parser is unbuilt,
-    in which case /ingest returns fixture sessions -- see core.pipeline."""
+    info = model_info()
     return HealthResponse(
-        status="ok", version=VERSION, parser_available=pipeline.parser_available()
+        status="ok",
+        version=VERSION,
+        rule_count=len(load_rules()),
+        model=ModelHealth(
+            trained=info["trained"], model_version=info["model_version"], algo=info.get("algo")
+        ),
+        live=LiveHealth(
+            interface_capture=sources.dumpcap_path() is not None,
+            replay=DEMO_CAPTURE.is_file(),
+            state=_run.status.state if _run else "idle",
+        ),
     )
 
 
-_METRICS_PATH = Path(__file__).resolve().parent.parent / "models" / "eval_metrics.json"
-
-
-@app.get("/model/metrics")
+@app.get("/model/metrics", tags=["system"])
 def model_metrics() -> dict:
     """Stage 4b evaluation artifacts for the dashboard: accuracy, macro-F1,
     per-class scores and RandomForest feature importances. ``{}`` until a model
     is trained (`python -m core.classifiers.train`)."""
-    import json
-
-    if not _METRICS_PATH.exists():
-        return {}
     try:
         return json.loads(_METRICS_PATH.read_text())
-    except (json.JSONDecodeError, OSError):
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
 
 
-@app.post("/ingest", response_model=IngestResponse)
-async def ingest(file: UploadFile = File(...)) -> IngestResponse:
-    """Analyse an uploaded pcap and persist the resulting sessions."""
-    job_id = str(uuid.uuid4())
-    target = UPLOAD_DIR / f"{job_id}-{Path(file.filename or 'capture.pcap').name}"
-    target.parent.mkdir(parents=True, exist_ok=True)
+@app.get("/rules", response_model=list[Rule], tags=["system"])
+def rules() -> list[Rule]:
+    """The Stage 4c rule table every session is scored against."""
+    return [
+        Rule(
+            id=r["id"],
+            description=r["description"],
+            severity=r["severity"],
+            cve=r.get("cve"),
+            standard=r.get("standard") or "",
+        )
+        for r in load_rules()
+    ]
+
+
+# --- ingest + jobs ------------------------------------------------------------------
+
+
+async def _receive(file: UploadFile, job_id: str) -> Path:
+    """Stream the upload to disk, rejecting non-captures and oversize files early."""
+    head = await file.read(4)
+    suffix = _CAPTURE_MAGIC.get(head)
+    if suffix is None:
+        raise HTTPException(415, "not a pcap or pcapng capture (unrecognised file header)")
+    CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
+    target = CAPTURE_DIR / f"{job_id}{suffix}"
+    limit, written = _max_upload_bytes(), len(head)
     try:
         with target.open("wb") as fh:
-            shutil.copyfileobj(file.file, fh)
+            fh.write(head)
+            while chunk := await file.read(1 << 20):
+                written += len(chunk)
+                if written > limit:
+                    raise HTTPException(413, f"capture exceeds {limit // (1024 * 1024)} MB")
+                fh.write(chunk)
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
+    return target
 
-        # Analysis is CPU-bound and synchronous; keep the event loop free so
-        # /ws/live subscribers are not blocked by a large upload.
-        sessions = await asyncio.to_thread(pipeline.analyze_capture, target, "pcap_upload")
+
+@app.post("/ingest", response_model=IngestResponse, tags=["analysis"])
+async def ingest(file: UploadFile = File(...)) -> IngestResponse:
+    """Analyse an uploaded pcap / pcapng and persist it as a new job."""
+    job_id = str(uuid.uuid4())
+    try:
+        target = await _receive(file, job_id)
     finally:
         await file.close()
-        target.unlink(missing_ok=True)
 
-    store.save_sessions(job_id, sessions, capture_file=file.filename)
-    store.save_events(job_id, detect_anomalies(sessions))
-    await _broadcast(sessions)
+    try:
+        # CPU-bound: keep the event loop free for /ws/live subscribers.
+        analysis = await asyncio.to_thread(analyze_capture, target, "pcap_upload")
+    except Exception as exc:
+        target.unlink(missing_ok=True)
+        raise HTTPException(422, f"capture could not be read: {exc}") from exc
+
+    keep = _keep_captures()
+    name = Path(file.filename or target.name).name
+    for session in analysis.sessions:
+        session.capture_file = name
+    store.save_analysis(
+        job_id,
+        analysis.sessions,
+        analysis.anomalies,
+        analysis.stats,
+        capture_file=name,
+        capture_path=str(target) if keep else None,
+    )
+    if not keep:
+        target.unlink(missing_ok=True)
+    await _publish(live.messages(job_id, analysis.sessions, analysis.anomalies))
 
     return IngestResponse(
-        session_count=len(sessions),
         job_id=job_id,
-        fixture_mode=not pipeline.parser_available(),
+        session_count=len(analysis.sessions),
+        anomaly_count=len(analysis.anomalies),
+        stats=analysis.stats,
     )
 
 
-@app.get("/sessions", response_model=list[VPNSession])
+@app.get("/jobs", response_model=list[JobSummary], tags=["jobs"])
+def list_jobs(limit: int = Query(100, ge=1, le=1000)) -> list[JobSummary]:
+    """Every analysed capture, newest first."""
+    return store.list_jobs(limit)
+
+
+def _job_or_404(job_id: str) -> JobSummary:
+    job = store.get_job(job_id)
+    if job is None:
+        raise HTTPException(404, f"no job {job_id}")
+    return job
+
+
+@app.get("/jobs/{job_id}", response_model=JobSummary, tags=["jobs"])
+def get_job(job_id: str) -> JobSummary:
+    return _job_or_404(job_id)
+
+
+@app.delete("/jobs/{job_id}", status_code=204, tags=["jobs"])
+def delete_job(job_id: str) -> None:
+    if _run is not None and _run.job_id == job_id and _run.status.state == "running":
+        raise HTTPException(409, "stop the live run before deleting its job")
+    if not store.delete_job(job_id):
+        raise HTTPException(404, f"no job {job_id}")
+
+
+@app.get("/jobs/{job_id}/capture", tags=["jobs"])
+def download_capture(job_id: str) -> FileResponse:
+    """The capture a job analysed -- evidence frame numbers index into this file."""
+    job = _job_or_404(job_id)
+    path = store.capture_path(job_id)
+    if path is None:
+        raise HTTPException(404, "capture not retained for this job")
+    stem = Path(job.capture_file or path.name).stem
+    return FileResponse(path, filename=f"{stem}{path.suffix}")
+
+
+# --- sessions + events --------------------------------------------------------------
+
+
+@app.get("/sessions", response_model=list[VPNSession], tags=["analysis"])
 def get_sessions(
-    severity: str | None = None,
+    severity: Severity | None = None,
     job_id: str | None = None,
     limit: int = Query(50, ge=1, le=1000),
     offset: int = Query(0, ge=0),
@@ -161,28 +357,33 @@ def get_sessions(
     return store.list_sessions(severity=severity, job_id=job_id, limit=limit, offset=offset)
 
 
-@app.get("/session/{session_id}", response_model=VPNSession)
-def get_session(session_id: str) -> VPNSession:
-    session = store.get_session(session_id)
+@app.get("/session/{session_id}", response_model=VPNSession, tags=["analysis"])
+def get_session(session_id: str, job_id: str | None = None) -> VPNSession:
+    session = store.get_session(session_id, job_id=job_id)
     if session is None:
-        raise HTTPException(status_code=404, detail=f"no session {session_id}")
+        raise HTTPException(404, f"no session {session_id}")
     return session
 
 
-@app.get("/events", response_model=list[AnomalyEvent])
-def get_events(session_id: str | None = None, severity: str | None = None) -> list[AnomalyEvent]:
-    return store.list_events(session_id=session_id, severity=severity)
+@app.get("/events", response_model=list[AnomalyEvent], tags=["analysis"])
+def get_events(
+    job_id: str | None = None,
+    session_id: str | None = None,
+    severity: Literal["CRITICAL", "HIGH", "MEDIUM"] | None = None,
+) -> list[AnomalyEvent]:
+    """Runtime anomalies, worst first. Scope with ``job_id`` for one capture."""
+    return store.list_events(session_id=session_id, severity=severity, job_id=job_id)
 
 
-@app.get("/sessions/diff", response_model=DiffResponse)
+@app.get("/sessions/diff", response_model=DiffResponse, tags=["analysis"])
 def diff(base_job: str, compare_job: str) -> DiffResponse:
     """Compare two captures: new peers, gone peers, and sessions that got worse."""
     for job in (base_job, compare_job):
         if not store.job_exists(job):
-            raise HTTPException(status_code=404, detail=f"no job {job}")
+            raise HTTPException(404, f"no job {job}")
 
-    base = {s.session_id: s for s in store.list_sessions(job_id=base_job, limit=1000)}
-    compare = {s.session_id: s for s in store.list_sessions(job_id=compare_job, limit=1000)}
+    base = {s.session_id: s for s in store.list_sessions(job_id=base_job, limit=100_000)}
+    compare = {s.session_id: s for s in store.list_sessions(job_id=compare_job, limit=100_000)}
 
     degraded = [
         DegradedSession(
@@ -204,67 +405,118 @@ def diff(base_job: str, compare_job: str) -> DiffResponse:
     )
 
 
+# --- reports ------------------------------------------------------------------------
+
 _REPORT_BUILDERS = {
-    "executive": ("pdf", lambda s, p, n: render.write_executive_pdf(s, p, n)),
-    "technical": ("html", lambda s, p, n: render.write_technical_html(s, p, n)),
-    "json": ("json", lambda s, p, n: export.write_json(s, p)),
-    "cef": ("cef", lambda s, p, n: export.write_cef(s, p)),
+    "executive": ("pdf", render.write_executive_pdf),
+    "technical": ("html", render.write_technical_html),
+    "json": ("json", lambda s, p, _name, events: export.write_json(s, p, events)),
+    "cef": ("cef", lambda s, p, _name, events: export.write_cef(s, p, events)),
 }
 
 
-@app.post("/report/{job_id}", response_model=ReportResponse)
+@app.post("/report/{job_id}", response_model=ReportResponse, tags=["reports"])
 async def build_report(job_id: str, request: ReportRequest) -> ReportResponse:
-    sessions = store.list_sessions(job_id=job_id, limit=1000)
+    job = _job_or_404(job_id)
+    sessions = store.list_sessions(job_id=job_id, limit=100_000)
     if not sessions:
-        raise HTTPException(status_code=404, detail=f"no sessions for job {job_id}")
+        raise HTTPException(404, f"no sessions for job {job_id}")
+    events = store.list_events(job_id=job_id)
 
     suffix, builder = _REPORT_BUILDERS[request.type]
     path = REPORT_DIR / f"{job_id}-{request.type}.{suffix}"
-    capture_name = sessions[0].capture_file
-    await asyncio.to_thread(builder, sessions, path, capture_name)
-
+    await asyncio.to_thread(builder, sessions, path, job.capture_file, events)
     return ReportResponse(download_url=f"/report/download/{path.name}")
 
 
-@app.get("/report/download/{filename}")
+@app.get("/report/download/{filename}", tags=["reports"])
 def download_report(filename: str) -> FileResponse:
     # Resolve and confine to REPORT_DIR: `filename` is user-controlled and
     # could otherwise traverse out with '..' or an absolute path.
     path = (REPORT_DIR / filename).resolve()
     if not path.is_relative_to(REPORT_DIR.resolve()) or not path.is_file():
-        raise HTTPException(status_code=404, detail="no such report")
+        raise HTTPException(404, "no such report")
     return FileResponse(path, filename=path.name)
 
 
-# --- live capture stream (P3-T8) -------------------------------------------
+# --- live capture (P3-T8) --------------------------------------------------------------
 
 _subscribers: set[WebSocket] = set()
+_run: live.LiveRun | None = None
 
 
-async def _broadcast(sessions: list[VPNSession]) -> None:
-    """Push new sessions to every live subscriber; drop those that have gone."""
-    if not _subscribers:
+async def _publish(messages: list[dict]) -> None:
+    """Push messages to every live subscriber; drop those that have gone."""
+    if not _subscribers or not messages:
         return
     dead = set()
     for socket in list(_subscribers):
         try:
-            for session in sessions:
-                await socket.send_json(session.model_dump(mode="json"))
+            for message in messages:
+                await socket.send_json(message)
         except (WebSocketDisconnect, RuntimeError):
             dead.add(socket)
     _subscribers.difference_update(dead)
 
 
-@app.websocket("/ws/live")
-async def live(websocket: WebSocket, nic: str | None = None) -> None:
-    """Stream sessions as they are detected.
+@app.get("/live/status", response_model=live.LiveStatus, tags=["live"])
+def live_status() -> live.LiveStatus:
+    return _run.status if _run else live.LiveStatus()
 
-    Every ingest broadcasts here, so the dashboard updates without polling.
-    Live NIC capture itself is Stage 1 (Block A); until that lands this carries
-    upload-driven sessions only.
+
+@app.get("/live/interfaces", response_model=list[Interface], tags=["live"])
+async def live_interfaces() -> list[Interface]:
+    """NICs the backend can capture on. Empty when dumpcap is missing or unprivileged."""
+    return [Interface(**i) for i in await asyncio.to_thread(sources.list_interfaces)]
+
+
+@app.post("/live/start", response_model=live.LiveStatus, tags=["live"])
+async def live_start(request: LiveStartRequest) -> live.LiveStatus:
+    """Start a live run: sessions stream over ``/ws/live`` and land in a new job."""
+    global _run
+    if _run is not None and _run.status.state == "running":
+        raise HTTPException(409, f"a live run is already active ({_run.job_id})")
+
+    if request.source == "interface":
+        if not request.interface:
+            raise HTTPException(422, "source=interface needs an interface name")
+        source: sources.LiveSource = sources.InterfaceSource(request.interface)
+    else:
+        capture = store.capture_path(request.job_id) if request.job_id else DEMO_CAPTURE
+        if capture is None or not capture.is_file():
+            raise HTTPException(404, "no capture available to replay")
+        source = sources.ReplaySource(capture, speed=request.speed)
+
+    run = live.LiveRun(source, CAPTURE_DIR, _publish)
+    try:
+        await asyncio.to_thread(run.source.start, run.path)
+    except (RuntimeError, OSError) as exc:
+        raise HTTPException(503, f"could not start capture: {exc}") from exc
+    run.start_loop()
+    _run = run
+    await _publish([run.status_message()])
+    return run.status
+
+
+@app.post("/live/stop", response_model=live.LiveStatus, tags=["live"])
+async def live_stop() -> live.LiveStatus:
+    if _run is None:
+        return live.LiveStatus()
+    await _run.stop()
+    return _run.status
+
+
+@app.websocket("/ws/live")
+async def live_socket(websocket: WebSocket) -> None:
+    """Stream ``{"type": "session" | "anomaly" | "live", ...}`` messages.
+
+    Every upload and every live-run tick publishes here, so the console updates
+    without polling. A new subscriber is sent the current live status first.
     """
     await websocket.accept()
     _subscribers.add(websocket)
+    status = _run.status if _run else live.LiveStatus()
+    await websocket.send_json({"type": "live", "status": status.model_dump(mode="json")})
     try:
         while True:
             # Keep the connection open; the client is not required to send.

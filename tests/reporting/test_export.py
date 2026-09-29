@@ -103,3 +103,18 @@ def test_cef_written_to_disk(sessions, tmp_path):
 def test_empty_fleet_exports_cleanly():
     assert json.loads(export.to_json([])) == []
     assert export.to_cef([]) == ""
+
+
+def test_json_attaches_each_sessions_anomalies(sessions, anomaly):
+    payload = json.loads(export.to_json(sessions, [anomaly]))
+    by_id = {r["session_id"]: r for r in payload}
+    assert [a["anomaly_type"] for a in by_id["sess-weak"]["anomalies"]] == ["AGGRESSIVE_MODE_PROBE"]
+    assert by_id["sess-clean"]["anomalies"] == []
+    assert [VPNSession(**r) for r in payload] == sessions  # still the Section 5 shape
+
+
+def test_cef_emits_one_event_per_anomaly_with_evidence(sessions, anomaly):
+    lines = export.to_cef(sessions, [anomaly]).splitlines()
+    [line] = [x for x in lines if "|AGGRESSIVE_MODE_PROBE|" in x]
+    assert CEF_HEADER.match(line).group("sev") == "8"
+    assert "cs6=47,48" in line and "src=10.0.0.1" in line

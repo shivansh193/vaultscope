@@ -110,7 +110,6 @@ def test_summary_shape(ikev2_pcap):
         "incomplete_sessions",
         "nat_traversal_sessions",
     }
-    assert s["reader"] == "scapy"
 
 
 def test_to_vpn_sessions_runs_stage2(ikev2_pcap):
@@ -121,12 +120,32 @@ def test_to_vpn_sessions_runs_stage2(ikev2_pcap):
     assert sessions[0].ike.encryption == "AES-256-GCM"
 
 
-def test_pyshark_preference_falls_back_cleanly(ikev2_pcap, monkeypatch):
-    # force the pyshark path to explode; ingest must still return via scapy
-    import core.ingestion.engine as eng
+def test_session_frames_keep_their_evidence(ikev2_pcap):
+    """Frame numbers and timestamps survive bucketing -- anomaly evidence needs them."""
+    s = ingest(ikev2_pcap).sessions[0]
+    assert [f.frame for f in s.ike_frames] == list(range(1, s.ike_packets + 1))
+    assert all(f.time > 0 for f in s.ike_frames)
 
-    monkeypatch.setattr(
-        eng, "_ingest_pyshark", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError)
+
+def test_esp_goes_to_the_sa_between_the_same_peers(tmp_path):
+    """Two tunnels, one capture: each SA gets only its own peers' ESP."""
+    from scapy.layers.inet import IP
+    from scapy.layers.ipsec import ESP
+    from scapy.utils import rdpcap, wrpcap
+
+    a = B.write_pcap(tmp_path / "a.pcap", B.sa_init_for_preset("aes256gcm_ecp521_pfs"))
+    other_sa = [b"\x99" * 8 + m[8:] for m in B.sa_init_for_preset("3des_sha1_modp1024")]
+    b = B.write_pcap(
+        tmp_path / "b.pcap",
+        other_sa,
+        src="10.0.0.1",
+        dst="10.0.0.2",
     )
-    result = ingest(ikev2_pcap, prefer="pyshark")
-    assert result.reader == "scapy" and result.sessions
+    frames = list(rdpcap(a)) + list(rdpcap(b))
+    frames += [IP(src="10.0.0.1", dst="10.0.0.2") / ESP(spi=7, seq=i) for i in range(1, 4)]
+    path = tmp_path / "two.pcap"
+    wrpcap(str(path), frames)
+
+    by_peer = {s.initiator_ip: s for s in ingest(path).sessions}
+    assert by_peer["10.0.0.1"].esp_packets == 3
+    assert by_peer["192.168.10.1"].esp_packets == 0

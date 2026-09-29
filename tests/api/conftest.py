@@ -40,6 +40,8 @@ def client(tmp_path, monkeypatch):
     from api import main, store
 
     monkeypatch.setattr(main, "REPORT_DIR", tmp_path / "reports")
+    monkeypatch.setattr(main, "CAPTURE_DIR", tmp_path / "captures")
+    monkeypatch.setattr(main, "_run", None)
     store.init_db()
     with TestClient(main.app) as test_client:
         yield test_client

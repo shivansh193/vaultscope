@@ -42,7 +42,6 @@ pydyf==0.10.0
 pyparsing==3.3.2
 pypdf==5.1.0
 pyphen==0.18.1
-pyshark==0.6
 pytest==8.3.4
 pytest-asyncio==0.24.0
 pytest-cov==6.0.0

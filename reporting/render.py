@@ -10,12 +10,13 @@ working on a box with no pango installed.
 
 import datetime as dt
 import json
+from collections.abc import Sequence
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from markupsafe import Markup
 
-from core.models import VPNSession
+from core.models import SEVERITY_ORDER, AnomalyEvent, VPNSession
 from reporting import aggregate
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -106,15 +107,30 @@ def _actions(summary: dict) -> list[str]:
 
 
 def _overall_severity(sessions: list[VPNSession]) -> str:
-    from core.models import SEVERITY_ORDER
-
     if not sessions:
         return "SAFE"
     return min((s.security_assessment.overall_severity for s in sessions), key=SEVERITY_ORDER.index)
 
 
-def _context(sessions: list[VPNSession], capture_name: str | None) -> dict:
+ANOMALY_PLAIN_ENGLISH: dict[str, str] = {
+    "AGGRESSIVE_MODE_PROBE": "Someone attempted the IKEv1 Aggressive Mode exchange that leaks a crackable password hash.",
+    "TRANSFORM_BRUTEFORCE": "One peer tried many different cipher combinations -- the pattern of a scanner mapping what the gateway accepts.",
+    "SPI_COLLISION": "The same tunnel identifier appeared between different peers, which points to replayed or spoofed traffic.",
+    "DOWNGRADE_SUSPECTED": "A peer that can negotiate strong encryption also settled on weak encryption -- consistent with an attacker stripping the strong options.",
+    "NAT_T_UNEXPECTED": "A peer with a public address used NAT traversal, which a directly-connected peer should not need.",
+    "REKEY_STORM": "Tunnels between one pair of peers were re-established repeatedly within a minute -- instability or forced renegotiation.",
+}
+
+
+def _context(
+    sessions: list[VPNSession],
+    capture_name: str | None,
+    anomalies: Sequence[AnomalyEvent] = (),
+) -> dict:
     summary = aggregate.summarise(sessions)
+    ranked = sorted(
+        anomalies, key=lambda e: (SEVERITY_ORDER.index(e.severity), e.anomaly_type, e.timestamp)
+    )
     overall = _overall_severity(sessions)
     return {
         # Markup, not str: autoescape is on for session data (untrusted packet
@@ -131,17 +147,35 @@ def _context(sessions: list[VPNSession], capture_name: str | None) -> dict:
         "plain_english": PLAIN_ENGLISH,
         "severity_plain_english": SEVERITY_PLAIN_ENGLISH,
         "confusion_matrix": _load_confusion_matrix(),
+        "anomalies": ranked,
+        "anomaly_kinds": sorted(
+            {e.anomaly_type for e in ranked},
+            key=lambda k: min(
+                SEVERITY_ORDER.index(e.severity) for e in ranked if e.anomaly_type == k
+            ),
+        ),
+        "anomaly_plain_english": ANOMALY_PLAIN_ENGLISH,
         "cve_url": aggregate.cve_url,
         "standard_url": aggregate.standard_url,
     }
 
 
-def render_executive_html(sessions: list[VPNSession], capture_name: str | None = None) -> str:
-    return _env().get_template("executive.html.j2").render(**_context(sessions, capture_name))
+def render_executive_html(
+    sessions: list[VPNSession],
+    capture_name: str | None = None,
+    anomalies: Sequence[AnomalyEvent] = (),
+) -> str:
+    context = _context(sessions, capture_name, anomalies)
+    return _env().get_template("executive.html.j2").render(**context)
 
 
-def render_technical_html(sessions: list[VPNSession], capture_name: str | None = None) -> str:
-    return _env().get_template("technical.html.j2").render(**_context(sessions, capture_name))
+def render_technical_html(
+    sessions: list[VPNSession],
+    capture_name: str | None = None,
+    anomalies: Sequence[AnomalyEvent] = (),
+) -> str:
+    context = _context(sessions, capture_name, anomalies)
+    return _env().get_template("technical.html.j2").render(**context)
 
 
 def html_to_pdf(html: str, path: str | Path) -> Path:
@@ -157,21 +191,30 @@ def html_to_pdf(html: str, path: str | Path) -> Path:
 
 
 def write_executive_pdf(
-    sessions: list[VPNSession], path: str | Path, capture_name: str | None = None
+    sessions: list[VPNSession],
+    path: str | Path,
+    capture_name: str | None = None,
+    anomalies: Sequence[AnomalyEvent] = (),
 ) -> Path:
-    return html_to_pdf(render_executive_html(sessions, capture_name), path)
+    return html_to_pdf(render_executive_html(sessions, capture_name, anomalies), path)
 
 
 def write_technical_html(
-    sessions: list[VPNSession], path: str | Path, capture_name: str | None = None
+    sessions: list[VPNSession],
+    path: str | Path,
+    capture_name: str | None = None,
+    anomalies: Sequence[AnomalyEvent] = (),
 ) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_technical_html(sessions, capture_name))
+    path.write_text(render_technical_html(sessions, capture_name, anomalies))
     return path
 
 
 def write_technical_pdf(
-    sessions: list[VPNSession], path: str | Path, capture_name: str | None = None
+    sessions: list[VPNSession],
+    path: str | Path,
+    capture_name: str | None = None,
+    anomalies: Sequence[AnomalyEvent] = (),
 ) -> Path:
-    return html_to_pdf(render_technical_html(sessions, capture_name), path)
+    return html_to_pdf(render_technical_html(sessions, capture_name, anomalies), path)

@@ -6,7 +6,6 @@ wired up correctly. Slice work replaces/extends these with real tests under
 """
 
 import importlib
-import shutil
 import subprocess
 
 import pytest
@@ -56,7 +55,7 @@ def test_repo_skeleton_exists(repo_root):
         # dataset + model artifacts
         "data/pcaps",
         "data/labels",
-        "data/mock",
+        "data/demo",
         "models",
         # test tree mirrors the slices
         "tests/testbed",
@@ -74,40 +73,31 @@ def test_repo_skeleton_exists(repo_root):
         assert (repo_root / rel).is_dir(), f"missing {rel}"
 
 
-def test_tshark_on_path():
-    """``pyshark`` (Stage 1 ingestion) shells out to tshark; it is not a pip dep.
+def test_dumpcap_available_for_live_capture():
+    """Live interface capture (``core.live.InterfaceSource``) shells out to dumpcap.
 
-    On macOS, Wireshark.app ships tshark but does not put it on PATH -- symlink
-    /Applications/Wireshark.app/Contents/MacOS/tshark into a PATH dir.
+    Uploaded captures never need it -- only a live run on a real NIC does.
+    macOS: ``brew install wireshark``. Debian/Ubuntu: ``apt install tshark``.
     """
-    assert shutil.which("tshark") is not None, (
-        "tshark not found on PATH. Install Wireshark's CLI: "
-        "macOS `brew install wireshark`, Debian/Ubuntu `apt install tshark`, "
-        "Windows: install Wireshark and add it to PATH."
-    )
-    probe = subprocess.run(["tshark", "-v"], capture_output=True, text=True, timeout=30)
+    from core.live import dumpcap_path
+
+    tool = dumpcap_path()
+    assert tool is not None, "dumpcap not found; live interface capture will be unavailable"
+    probe = subprocess.run([tool, "-v"], capture_output=True, text=True, timeout=30)
     assert probe.returncode == 0, probe.stderr
 
 
-def test_pyshark_reads_a_pcap(tmp_path):
-    """End-to-end Stage 1 dependency check: scapy writes, tshark+pyshark read."""
-    import pyshark
-    from scapy.all import IP, UDP, Raw, wrpcap
+def test_capture_reader_round_trips_a_pcap(tmp_path):
+    """Stage 1 dependency check: scapy writes a pcap, core.capture reads it back."""
+    from scapy.all import IP, Raw, wrpcap
 
-    pcap = tmp_path / "ike.pcap"
-    # 28-byte IKEv2 header shape: init SPI | resp SPI | version/exchange/flags | ...
-    header = bytes.fromhex("1122334455667788") + b"\x00" * 8 + bytes([0x21, 0x20, 0x22, 0x08])
-    wrpcap(
-        str(pcap), [IP(src="10.0.0.1", dst="10.0.0.2") / UDP(sport=500, dport=500) / Raw(header)]
-    )
+    from core.capture import read_capture
 
-    capture = pyshark.FileCapture(str(pcap), display_filter="udp.port==500 or udp.port==4500")
-    try:
-        packets = list(capture)
-    finally:
-        capture.close()
-    assert len(packets) == 1
-    assert packets[0].udp.dstport == "500"
+    pcap = tmp_path / "esp.pcap"
+    wrpcap(str(pcap), [IP(src="10.0.0.1", dst="10.0.0.2", proto=50) / Raw(b"\x00\x00\x10\x00" * 4)])
+    read = read_capture(pcap)
+    assert read.packets_seen == 1
+    assert [(e.spi, e.frame) for e in read.esp] == [(0x1000, 1)]
 
 
 def test_weasyprint_renders_pdf(tmp_path):

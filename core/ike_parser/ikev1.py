@@ -81,8 +81,9 @@ from ._wire import IkeMessage, WireFormatError
 from .ikev2 import (  # shared pcap / source ingestion
     _first_timestamp,
     _frames_for,
-    _normalise,
+    _groups,
     apply_edge_cases,
+    mark_unobserved,
 )
 
 _ZERO_COOKIE = b"\x00" * 8
@@ -293,6 +294,7 @@ def _analyse(messages: list[IkeMessage], ctx: dict) -> VPNSession:
     apply_edge_cases(ike, messages, ctx)  # P2-T4: VID vendor, IKE fragmentation, anti-replay
 
     ike["msg_sizes"] = [m.length or 0 for m in messages]
+    mark_unobserved(ike)
     return VPNSession(
         session_id=f"{icookie.hex()}-{rcookie.hex()}",
         initiator_ip=ctx.get("initiator_ip") or "",
@@ -315,11 +317,11 @@ def _bucket_v1(messages: list[IkeMessage]) -> dict[bytes, list[IkeMessage]]:
 
 def parse_ikev1_sessions(source) -> list[VPNSession]:
     """Every IKEv1 phase-1 SA found in ``source``."""
-    messages, ctx = _normalise(source)
-    messages = [m for m in messages if m.is_ikev1]
-    if not messages:
-        return []
-    return [_analyse(msgs, ctx) for msgs in _bucket_v1(messages).values()]
+    sessions: list[VPNSession] = []
+    for messages, ctx in _groups(source):
+        v1 = [m for m in messages if m.is_ikev1]
+        sessions.extend(_analyse(msgs, ctx) for msgs in _bucket_v1(v1).values())
+    return sessions
 
 
 def parse_ikev1(source) -> VPNSession:

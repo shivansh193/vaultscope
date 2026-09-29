@@ -30,7 +30,6 @@ capture) -- never guessed, so rule R10 does not misfire.
 from __future__ import annotations
 
 import os
-import struct
 from collections import OrderedDict
 from collections.abc import Iterable
 
@@ -64,10 +63,9 @@ from ._transforms import (
     is_aead_encr,
 )
 from ._vendor_ids import fingerprint_vendor
-from ._wire import IkeMessage, Proposal, WireFormatError, decode_message
+from ._wire import IkeMessage, Proposal, decode_message
 
 _ZERO_SPI = b"\x00" * 8
-_NON_ESP_MARKER = b"\x00\x00\x00\x00"
 
 
 class NoIKEv2Error(ValueError):
@@ -75,141 +73,67 @@ class NoIKEv2Error(ValueError):
 
 
 # --------------------------------------------------------------------------- #
-# pcap ingestion                                                               #
-# --------------------------------------------------------------------------- #
-class _PcapMessage:
-    __slots__ = ("msg", "ip_version", "src_ip", "dst_ip", "udp_port", "time", "frame")
-
-    def __init__(self, msg, ip_version, src_ip, dst_ip, udp_port, time=0.0, frame=0):
-        self.msg = msg
-        self.ip_version = ip_version
-        self.src_ip = src_ip
-        self.dst_ip = dst_ip
-        self.udp_port = udp_port
-        self.time = time
-        self.frame = frame  # 1-based frame number in the source pcap
-
-
-def _read_pcap(path: str | os.PathLike) -> tuple[list[_PcapMessage], list[tuple[int, int]]]:
-    """Return (ike_messages, esp_records). Non-IKE / malformed frames are
-    skipped; both IKEv1 and IKEv2 messages are kept (callers filter by version).
-    ``esp_records`` is ``[(spi, seq), ...]`` for every ESP/AH packet -- used to
-    anchor a mid-session capture and to spot anti-replay being off.
-    """
-    from scapy.layers.inet import IP, UDP  # noqa: PLC0415  (lazy: keep import light)
-    from scapy.layers.inet6 import IPv6  # noqa: PLC0415
-    from scapy.utils import rdpcap  # noqa: PLC0415
-
-    try:
-        from scapy.layers.ipsec import ESP  # noqa: PLC0415
-    except Exception:  # pragma: no cover - older scapy
-        ESP = None  # type: ignore[assignment]
-
-    out: list[_PcapMessage] = []
-    esp_records: list[tuple[int, int]] = []  # (spi, seq) for the anti-replay check
-
-    def _record_esp(blob: bytes) -> None:
-        if len(blob) >= 8:
-            spi, seq = struct.unpack_from(">II", blob)
-            esp_records.append((spi, seq))
-
-    for _frame_i, pkt in enumerate(rdpcap(str(path)), start=1):
-        if IP in pkt:
-            ipv, ip_layer = "IPv4", pkt[IP]
-        elif IPv6 in pkt:
-            ipv, ip_layer = "IPv6", pkt[IPv6]
-        else:
-            continue
-
-        if ESP is not None and ESP in pkt:
-            _record_esp(struct.pack(">II", int(pkt[ESP].spi), int(pkt[ESP].seq)))
-            continue
-        if IPv6 not in pkt and IP in pkt and pkt[IP].proto in (50, 51):
-            _record_esp(bytes(pkt[IP].payload))
-            continue
-
-        if UDP not in pkt:
-            continue
-        udp = pkt[UDP]
-        if udp.sport not in (500, 4500) and udp.dport not in (500, 4500):
-            continue
-
-        # Use the bytes as captured. scapy binds UDP/500 + UDP/4500 to its
-        # ISAKMP dissector, so bytes(udp.payload) would round-trip through that
-        # (IKEv1-oriented) layer and can mangle an IKEv2 message; `.original`
-        # is the untouched on-wire payload.
-        inner = udp.payload
-        payload = getattr(inner, "original", None) or bytes(inner)
-        if not payload:
-            continue
-
-        on_4500 = 4500 in (udp.sport, udp.dport)
-        if on_4500:
-            if payload[:4] == _NON_ESP_MARKER:
-                ike_bytes = payload[4:]
-            else:
-                _record_esp(payload)  # ESP-in-UDP data / keepalive
-                continue
-        else:
-            ike_bytes = payload
-
-        try:
-            msg = decode_message(ike_bytes)
-        except (WireFormatError, struct.error):
-            continue
-        if not (msg.is_ikev2 or msg.is_ikev1):
-            continue
-
-        out.append(
-            _PcapMessage(
-                msg,
-                ipv,
-                getattr(ip_layer, "src", None),
-                getattr(ip_layer, "dst", None),
-                4500 if on_4500 else 500,
-                float(getattr(pkt, "time", 0.0)),
-                _frame_i,
-            )
-        )
-    return out, esp_records
-
-
-# --------------------------------------------------------------------------- #
 # source normalisation                                                         #
 # --------------------------------------------------------------------------- #
-def _normalise(source) -> tuple[list[IkeMessage], dict]:
-    """Return (all IKE messages in capture order, context dict).
+def _frames_ctx(frames, esp_records: list[tuple[int, int]]) -> dict:
+    """Context for one IKE SA from its captured frames (``core.capture.IkeFrame``).
 
-    Both IKEv1 and IKEv2 messages are returned; ``parse_ikevN`` filters by
-    version. Kept in ``ikev2`` for history; ``ikev1`` imports it.
+    Everything here is per SA: a capture holding six tunnels has six initiator
+    addresses, six first-seen times and six sets of evidence frames.
     """
     ctx: dict = {
-        "ip_version": None,
+        "ip_version": frames[0].ip_version if frames else None,
         "initiator_ip": None,
         "responder_ip": None,
-        "saw_esp": False,
-        "esp_records": [],
-    }
-
-    if isinstance(source, str | os.PathLike):
-        pmsgs, esp_records = _read_pcap(source)
-        ctx["saw_esp"] = bool(esp_records)
-        ctx["esp_records"] = esp_records
+        "saw_esp": bool(esp_records),
+        "esp_records": esp_records,
         # (key, timestamp) per IKE packet -- identical keys spaced apart are
         # retransmissions (secondary vendor fingerprint).
-        ctx["ike_times"] = [
-            ((p.msg.exchange_type, p.msg.message_id, p.msg.is_response), p.time) for p in pmsgs
-        ]
+        "ike_times": [
+            ((f.msg.exchange_type, f.msg.message_id, f.msg.is_response), f.time) for f in frames
+        ],
         # (initiator_spi hex, pcap frame number) -- anomaly evidence pointers
-        ctx["ike_frames"] = [(p.msg.initiator_spi.hex(), p.frame) for p in pmsgs]
-        if pmsgs:
-            ctx["ip_version"] = pmsgs[0].ip_version
-            ctx["nat_traversal"] = any(p.udp_port == 4500 for p in pmsgs)
-        return [p.msg for p in pmsgs], _fill_ip_ctx(ctx, pmsgs)
+        "ike_frames": [(f.msg.initiator_spi.hex(), f.frame) for f in frames],
+        "nat_traversal": any(f.udp_port == 4500 for f in frames),
+    }
+    # first non-response message with message_id 0 = the initiator's opening
+    # message (IKEv2 SA_INIT request, or IKEv1 MM/AM message 1). IKEv1 has no
+    # response flag, so the earliest capture-order match is the initiator's.
+    opener = next((f for f in frames if not f.msg.is_response and f.msg.message_id == 0), None)
+    opener = opener or (frames[0] if frames else None)
+    if opener is not None:
+        ctx["initiator_ip"], ctx["responder_ip"] = opener.src_ip, opener.dst_ip
+    return ctx
+
+
+def _groups(source) -> list[tuple[list[IkeMessage], dict]]:
+    """``source`` -> ``[(messages, ctx), ...]``, one group per IKE SA where the
+    source carries packet metadata (a capture path, or a Stage 1
+    ``RawSession``), else a single group of bare messages.
+    """
+    if hasattr(source, "ike_frames"):  # a Stage 1 RawSession: already one SA
+        frames = list(source.ike_frames)
+        return [([f.msg for f in frames], _frames_ctx(frames, list(source.esp_records)))]
+
+    if isinstance(source, str | os.PathLike):
+        from core.capture import read_capture  # noqa: PLC0415  (core.capture imports _wire)
+
+        read = read_capture(source)
+        by_sa: OrderedDict[bytes, list] = OrderedDict()
+        for f in read.ike:
+            by_sa.setdefault(f.msg.initiator_spi, []).append(f)
+        esp = [(e.spi or 0, e.seq or 0) for e in read.esp]
+        if not by_sa:
+            return [([], _frames_ctx([], esp))] if esp else [([], {})]
+        groups = []
+        for frames in by_sa.values():
+            peers = {frames[0].src_ip, frames[0].dst_ip}
+            mine = [(e.spi or 0, e.seq or 0) for e in read.esp if e.peers == peers]
+            groups.append(([f.msg for f in frames], _frames_ctx(frames, mine)))
+        return groups
 
     if isinstance(source, bytes | bytearray):
         source = [bytes(source)]
-
     messages: list[IkeMessage] = []
     for item in source:  # type: ignore[assignment]
         if isinstance(item, IkeMessage):
@@ -220,22 +144,13 @@ def _normalise(source) -> tuple[list[IkeMessage], dict]:
             raise TypeError(f"unsupported IKE source element: {type(item)!r}")
         if msg.is_ikev2 or msg.is_ikev1:
             messages.append(msg)
-    return messages, ctx
+    return [(messages, {})]
 
 
-def _fill_ip_ctx(ctx: dict, pmsgs: list[_PcapMessage]) -> dict:
-    # first non-response message with message_id 0 = the initiator's opening
-    # message (IKEv2 SA_INIT request, or IKEv1 MM/AM message 1). IKEv1 has no
-    # response flag, so the earliest capture-order match is the initiator's.
-    for p in pmsgs:
-        if not p.msg.is_response and p.msg.message_id == 0:
-            ctx["initiator_ip"] = p.src_ip
-            ctx["responder_ip"] = p.dst_ip
-            return ctx
-    if pmsgs:
-        ctx["initiator_ip"] = pmsgs[0].src_ip
-        ctx["responder_ip"] = pmsgs[0].dst_ip
-    return ctx
+def _normalise(source) -> tuple[list[IkeMessage], dict]:
+    """All IKE messages in ``source`` (v1 + v2, capture order) and the first SA's context."""
+    groups = _groups(source)
+    return [m for messages, _ in groups for m in messages], groups[0][1]
 
 
 # --------------------------------------------------------------------------- #
@@ -434,6 +349,7 @@ def _analyse(messages: list[IkeMessage], ctx: dict) -> VPNSession:
         ike["pfs_status"] = "unknown"
 
     ike["msg_sizes"] = [m.length or 0 for m in messages]
+    mark_unobserved(ike)
     return VPNSession(
         session_id=f"{init_spi.hex()}-{resp_spi.hex()}",
         initiator_ip=ctx.get("initiator_ip") or "",
@@ -442,6 +358,19 @@ def _analyse(messages: list[IkeMessage], ctx: dict) -> VPNSession:
         packet_refs=_frames_for(ctx, init_spi),
         timestamp=_first_timestamp(ctx),
     )
+
+
+def mark_unobserved(ike: dict) -> None:
+    """A field the capture never revealed is ``unknown``, never the model default.
+
+    ``IkeParams`` defaults describe a strong suite (AES-256-GCM, ECP256, RSA).
+    Letting them stand in for a field the handshake never showed would report
+    a truncated capture of a DES tunnel as SAFE -- a false negative, which for
+    an assessment tool is the worse failure. Rules never fire on ``unknown``.
+    """
+    for key in ("encryption", "integrity", "prf", "dh_group"):
+        ike.setdefault(key, "unknown")
+    ike.setdefault("auth_method", None)
 
 
 def _frames_for(ctx: dict, init_spi: bytes) -> list[int]:
@@ -471,27 +400,33 @@ def _bucket(messages: list[IkeMessage]) -> OrderedDict[bytes, list[IkeMessage]]:
 
 def parse_ikev2_sessions(source) -> list[VPNSession]:
     """Every IKEv2 SA found in ``source`` (see module docstring for types)."""
-    messages, ctx = _normalise(source)
-    messages = [m for m in messages if m.is_ikev2]
-    if not messages:
-        if ctx.get("saw_esp"):
-            ike = dict(
-                version="IKEv2",
-                pfs_status="unknown",
-                capture_complete=False,
-                auth_method=None,
-                encryption="unknown",
-                integrity="unknown",
-                prf="unknown",
-                dh_group="unknown",
-            )
-            if ctx.get("ip_version"):
-                ike["ip_version"] = ctx["ip_version"]
-            if anti_replay_from_esp(ctx.get("esp_records") or []) is False:
-                ike["anti_replay"] = False
-            return [VPNSession(session_id="esp-only", ike=IkeParams(**ike))]
-        return []
-    return [_analyse(msgs, ctx) for msgs in _bucket(messages).values()]
+    sessions: list[VPNSession] = []
+    for messages, ctx in _groups(source):
+        v2 = [m for m in messages if m.is_ikev2]
+        if v2:
+            sessions.extend(_analyse(msgs, ctx) for msgs in _bucket(v2).values())
+        elif not messages and ctx.get("saw_esp"):
+            sessions.append(_esp_only(ctx))
+    return sessions
+
+
+def _esp_only(ctx: dict) -> VPNSession:
+    """A mid-session capture: ESP seen, no handshake. Nothing is guessed."""
+    ike = dict(
+        version="IKEv2",
+        pfs_status="unknown",
+        capture_complete=False,
+        auth_method=None,
+        encryption="unknown",
+        integrity="unknown",
+        prf="unknown",
+        dh_group="unknown",
+    )
+    if ctx.get("ip_version"):
+        ike["ip_version"] = ctx["ip_version"]
+    if anti_replay_from_esp(ctx.get("esp_records") or []) is False:
+        ike["anti_replay"] = False
+    return VPNSession(session_id="esp-only", ike=IkeParams(**ike))
 
 
 def parse_ikev2(source) -> VPNSession:

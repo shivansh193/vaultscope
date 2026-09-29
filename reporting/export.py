@@ -1,13 +1,17 @@
 """Machine exports for SIEM ingestion (Stage 5, P3-T6).
 
-JSON is the canonical session array from spec Section 5. CEF is ArcSight
-Common Event Format, one event per finding, for direct SIEM import.
+JSON is the canonical session array from spec Section 5, each record also
+carrying the runtime anomalies raised against that session. CEF is ArcSight
+Common Event Format -- one event per finding, one per anomaly -- for direct
+SIEM import.
 """
 
 import json
+from collections import defaultdict
+from collections.abc import Sequence
 from pathlib import Path
 
-from core.models import VPNSession
+from core.models import AnomalyEvent, VPNSession
 
 CEF_VERSION = 0
 CEF_VENDOR = "VaultScope"
@@ -31,17 +35,32 @@ def _escape_extension(value: object) -> str:
     return text.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
 
 
-def to_json(sessions: list[VPNSession], indent: int = 2) -> str:
-    """Canonical session array. Matches the Section 5 schema exactly."""
-    return json.dumps([s.model_dump(mode="json") for s in sessions], indent=indent)
+def to_json(
+    sessions: list[VPNSession], anomalies: Sequence[AnomalyEvent] = (), indent: int = 2
+) -> str:
+    """Canonical session array (Section 5 schema), plus an ``anomalies`` list per
+    record. The extra key is a strict superset: every record still loads back
+    into a ``VPNSession`` unchanged."""
+    by_session: dict[str, list[dict]] = defaultdict(list)
+    for event in anomalies:
+        by_session[event.session_id].append(event.model_dump(mode="json"))
+    return json.dumps(
+        [
+            {**s.model_dump(mode="json"), "anomalies": by_session.get(s.session_id, [])}
+            for s in sessions
+        ],
+        indent=indent,
+    )
 
 
-def to_cef(sessions: list[VPNSession]) -> str:
-    """One CEF line per finding, plus one line per clean session.
+def to_cef(sessions: list[VPNSession], anomalies: Sequence[AnomalyEvent] = ()) -> str:
+    """One CEF line per finding, one per clean session, one per anomaly.
 
     A session with no findings still emits an event so a SIEM sees the tunnel
-    was assessed rather than silently missing from the feed.
+    was assessed rather than silently missing from the feed. Anomalies carry
+    the pcap frame numbers that evidence them.
     """
+    peers = {s.session_id: (s.initiator_ip, s.responder_ip) for s in sessions}
     lines: list[str] = []
     for session in sessions:
         assessment = session.security_assessment
@@ -81,6 +100,21 @@ def to_cef(sessions: list[VPNSession]) -> str:
                     ext,
                 )
             )
+
+    for event in anomalies:
+        src, dst = peers.get(event.session_id, ("", ""))
+        ext = {
+            "src": src,
+            "dst": dst,
+            "cs1Label": "sessionId",
+            "cs1": event.session_id,
+            "cs6Label": "evidenceFrames",
+            "cs6": ",".join(map(str, event.evidence_pkts)),
+            "rt": event.timestamp,
+        }
+        lines.append(
+            _cef_line(event.anomaly_type, event.description, _CEF_SEVERITY[event.severity], ext)
+        )
     return "\n".join(lines)
 
 
@@ -102,15 +136,19 @@ def _cef_line(signature_id: str, name: str, severity: int, extension: dict) -> s
     return f"{header}|{ext}"
 
 
-def write_json(sessions: list[VPNSession], path: str | Path) -> Path:
+def write_json(
+    sessions: list[VPNSession], path: str | Path, anomalies: Sequence[AnomalyEvent] = ()
+) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(to_json(sessions))
+    path.write_text(to_json(sessions, anomalies))
     return path
 
 
-def write_cef(sessions: list[VPNSession], path: str | Path) -> Path:
+def write_cef(
+    sessions: list[VPNSession], path: str | Path, anomalies: Sequence[AnomalyEvent] = ()
+) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(to_cef(sessions))
+    path.write_text(to_cef(sessions, anomalies))
     return path

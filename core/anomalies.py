@@ -34,14 +34,18 @@ def _event(
     evidence_pkts: list[int] | None = None,
     timestamp: str = "",
 ) -> AnomalyEvent:
+    # Deterministic: re-analysing the same capture (live mode does, every few
+    # seconds) must yield the same event, not a duplicate of it.
+    evidence = list(evidence_pkts or [])
+    identity = f"{kind}|{session_id}|{','.join(map(str, evidence))}|{description}"
     return AnomalyEvent(
-        anomaly_id=str(uuid.uuid4()),
+        anomaly_id=str(uuid.uuid5(uuid.NAMESPACE_OID, identity)),
         session_id=session_id,
         timestamp=timestamp,
         anomaly_type=kind,
         severity=severity,
         description=description,
-        evidence_pkts=list(evidence_pkts or []),
+        evidence_pkts=evidence,
     )
 
 
@@ -49,6 +53,12 @@ def _weak(s: VPNSession) -> bool:
     enc = (s.ike.encryption or "").lower()
     dh = (s.ike.dh_group or "").lower()
     return any(w in enc for w in _WEAK_ENC) or any(w in dh for w in _WEAK_DH)
+
+
+def _observed(s: VPNSession) -> bool:
+    """Both halves of the suite were seen. An ``unknown`` is neither weak nor
+    strong, so it must not make a downgrade or pad an enumeration count."""
+    return "unknown" not in (s.ike.encryption, s.ike.dh_group)
 
 
 def _is_public(ip: str) -> bool:
@@ -91,7 +101,7 @@ def detect_transform_bruteforce(sessions: list[VPNSession]) -> list[AnomalyEvent
     proposals: dict[tuple[str, str], set[tuple[str, str, str]]] = defaultdict(set)
     members: dict[tuple[str, str], list[VPNSession]] = defaultdict(list)
 
-    for s in sessions:
+    for s in filter(_observed, sessions):
         pair = (s.initiator_ip, s.responder_ip)
         proposals[pair].add((s.ike.encryption, s.ike.integrity, s.ike.dh_group))
         members[pair].append(s)
@@ -144,7 +154,7 @@ def detect_downgrade(sessions: list[VPNSession]) -> list[AnomalyEvent]:
     """The same peer pair negotiating both strong and weak crypto -- an on-path
     attacker stripping proposals so the responder settles on the weakest set."""
     by_pair: dict[tuple[str, str], list[VPNSession]] = defaultdict(list)
-    for s in sessions:
+    for s in filter(_observed, sessions):
         by_pair[(s.initiator_ip, s.responder_ip)].append(s)
 
     events: list[AnomalyEvent] = []
