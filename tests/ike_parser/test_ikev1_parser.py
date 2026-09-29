@@ -105,7 +105,7 @@ def test_capture_complete_and_metadata(main_mode_pcap):
     assert session.ike.ip_version == "IPv4"
     assert session.initiator_ip == "192.168.10.1"
     assert session.responder_ip == "192.168.20.1"
-    assert session.ike.mode == "tunnel"  # phase-1 only; tunnel/transport is Quick Mode (P2-T3)
+    assert session.ike.mode == "unknown"  # phase-1 only; tunnel/transport is Quick Mode
 
 
 def test_exchange_mode_name_helper(main_mode_pcap, aggr_pcap):

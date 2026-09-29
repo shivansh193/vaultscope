@@ -22,7 +22,7 @@ export interface CertInfo {
 
 export interface IkeParams {
   version: "IKEv1" | "IKEv2";
-  mode: "tunnel" | "transport";
+  mode: "tunnel" | "transport" | "unknown";
   aggressive_mode: boolean;
   encryption: string;
   integrity: string;

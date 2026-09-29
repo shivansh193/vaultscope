@@ -217,3 +217,10 @@ def test_decode_opaque_sk_when_not_plaintext():
 
 def test_public_vpnsession_is_the_canonical_model():
     assert VPNSession is CanonicalVPNSession
+
+
+def test_mode_is_unknown_when_ike_auth_was_never_seen(fixture_pcap):
+    """SA_INIT alone cannot show the mode; reporting "tunnel" there would be a
+    default passed off as an observation (it was wrong on 137 of 300 dataset
+    captures, all transport)."""
+    assert parse_ikev2(fixture_pcap("aes256gcm_ecp521_pfs")).ike.mode == "unknown"

@@ -37,7 +37,9 @@ class IkeParams(BaseModel):
     """Cryptographic negotiation parameters recovered from the IKE handshake."""
 
     version: Literal["IKEv1", "IKEv2"] = "IKEv2"
-    mode: Literal["tunnel", "transport"] = "tunnel"
+    # "unknown" when the capture never showed it: IKEv2 carries it inside the
+    # encrypted IKE_AUTH, IKEv1 in Quick Mode.
+    mode: Literal["tunnel", "transport", "unknown"] = "tunnel"
     aggressive_mode: bool = False
     encryption: str = "AES-256-GCM"
     integrity: str = "implicit"

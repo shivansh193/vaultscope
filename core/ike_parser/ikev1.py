@@ -240,7 +240,8 @@ def _analyse(messages: list[IkeMessage], ctx: dict) -> VPNSession:
         (m.responder_spi for m in messages if m.responder_spi != _ZERO_COOKIE), b"\x00" * 8
     )
 
-    ike: dict = {"version": "IKEv1", "mode": "tunnel"}
+    # Mode is a Quick Mode (phase 2) attribute; until one is read it is not known.
+    ike: dict = {"version": "IKEv1", "mode": "unknown"}
     if ctx.get("ip_version"):
         ike["ip_version"] = ctx["ip_version"]
     nat = bool(ctx.get("nat_traversal", False))

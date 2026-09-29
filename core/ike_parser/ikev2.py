@@ -268,12 +268,13 @@ def _analyse(messages: list[IkeMessage], ctx: dict) -> VPNSession:
 
     # Accumulate only what is actually observed; unset crypto fields fall to the
     # core.models.IkeParams defaults (a known gap when capture_complete is False).
-    ike: dict = {"version": "IKEv2", "mode": "tunnel", "aggressive_mode": False}
+    ike: dict = {"version": "IKEv2", "aggressive_mode": False}
     if ctx.get("ip_version"):
         ike["ip_version"] = ctx["ip_version"]
     ike["nat_traversal"] = bool(ctx.get("nat_traversal", False))
 
     saw_sa_init = False
+    saw_readable_auth = False  # IKE_AUTH decoded in the clear (key-logged capture)
     saw_sa_init_response = False
     proposal_applied_from_response = False
     child_negotiations: list[dict] = []
@@ -309,6 +310,7 @@ def _analyse(messages: list[IkeMessage], ctx: dict) -> VPNSession:
             if NOTIFY_USE_TRANSPORT_MODE in notifies:
                 ike["mode"] = "transport"
             child = _child_sa_payload(msg)
+            saw_readable_auth = saw_readable_auth or auth is not None or eap or child is not None
             if child is not None:
                 child_negotiations.append(
                     {
@@ -328,6 +330,12 @@ def _analyse(messages: list[IkeMessage], ctx: dict) -> VPNSession:
                         "dh_ok": child.proposals[0].has_dh(),
                     }
                 )
+
+    # Mode rides in IKE_AUTH (USE_TRANSPORT_MODE, RFC 7296 s1.3.1), which is
+    # encrypted unless the capture was key-logged. Tunnel is only a finding when
+    # a readable IKE_AUTH lacked the notify; otherwise the mode was not seen.
+    if "mode" not in ike:
+        ike["mode"] = "tunnel" if saw_readable_auth else "unknown"
 
     capture_complete = saw_sa_init_response or (saw_sa_init and "encryption" in ike)
     ike["capture_complete"] = capture_complete
