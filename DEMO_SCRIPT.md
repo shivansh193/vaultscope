@@ -30,7 +30,7 @@ Spoken lines are quoted. Actions in brackets. Timings are cumulative.
 > "Seven stages, all ours. Our own testbed generates the training data. A
 > hand-written RFC 7296 decoder reads the handshake. Then three analyses run in
 > parallel — a protocol classifier, the traffic classifier, and an
-> eighteen-rule engine — converging into one scored record."
+> twenty-one-rule engine — converging into one scored record."
 
 ---
 

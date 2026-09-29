@@ -8,14 +8,32 @@ one class of traffic pushed through it. Every capture has a JSON sibling
 recording what was **configured** — ground truth, not anything a parser
 recovered.
 
-## Regenerating
+What the corpus contains, its coverage per class and its known limits:
+[`DATASHEET.md`](DATASHEET.md).
+
+## Getting the captures
 
 The pcaps are not in git: they are large and reproducible. The labels are, so
-the ground truth stays reviewable in a diff.
+the ground truth stays reviewable in a diff. Every pcap's SHA-256 is in
+[`MANIFEST.sha256`](MANIFEST.sha256).
+
+**Download** the published corpus (`vaultscope-corpus.tar.gz`, ~129 MB):
+`<RELEASE-URL-PLACEHOLDER>`
 
 ```bash
-python scripts/generate_dataset.py --target 300 --duration 30 --parallel 4
+tar -xzf vaultscope-corpus.tar.gz -C data/pcaps
+python scripts/validate_dataset.py --require-pcaps   # schema + every hash
 ```
+
+**Or regenerate** the same 300 configurations the labels name:
+
+```bash
+python scripts/generate_dataset.py --from-labels --duration 30 --parallel 4
+python scripts/validate_dataset.py --write-manifest   # regenerated captures hash differently
+```
+
+A fresh stratified sample (not the published one) is
+`python scripts/generate_dataset.py --target 300`.
 
 Docker must be running. A full run takes roughly 40 minutes. It is resumable —
 a cell whose pcap and label already exist is skipped, so an interrupted run

@@ -34,7 +34,7 @@ point it at a live NIC, or replay a stored capture, and it:
    (IKEv1 Main / Aggressive / Quick Mode **and** IKEv2, from the raw bytes),
 2. **infers the traffic type inside each ESP tunnel** with a trained ML model,
    using only packet size / timing / direction — the payload is encrypted,
-3. **scores every session** against an 18-rule CVE-linked engine and detects
+3. **scores every session** against a 21-rule CVE-linked engine and detects
    **runtime attacks** (downgrade, proposal enumeration, PSK-hash harvesting,
    rekey storms, unexpected NAT-T) that static config review cannot
    see — each citing the **exact pcap frame numbers**, with the capture itself
@@ -64,7 +64,7 @@ then converge at Stage 5.
 | **3** | `core/flow/` | 13-feature metadata vector per ESP flow: packet-size mean/std/percentiles, inter-arrival timing, direction ratio, and a burst model (`burst_count`, `burst_gap_ratio`, `payload_size_var_burst`) built to separate Video from Web. |
 | **4a** | `core/classifiers/` | RandomForest fallback that recovers encryption + DH group from IKE **message structure** when the parser can't — the KE payload length is a near-perfect fingerprint of the DH group. Fills **only** fields the parser left `unknown`, only above 0.6 confidence, and every such value is marked *inferred* in the console and reports. |
 | **4b** | `core/classifiers/` | **The AI showpiece.** RandomForest + XGBoost over the Stage 3 vector; auto-selects the better model by macro-F1. Ships a trained model plus `confusion_matrix.json`, per-class precision/recall/F1, and a feature-importance chart. |
-| **4c** | `core/rules/` | 18 rules as **data** (`rules.yaml`), four operators, evaluated against `ike.*`. Weighted penalty → 0–100 risk score; any CRITICAL rule forces overall severity. |
+| **4c** | `core/rules/` | 21 rules as **data** (`rules.yaml`), four operators, evaluated against `ike.*`. Weighted penalty → 0–100 risk score; any CRITICAL rule forces overall severity. |
 | **5** | `reporting/` | Jinja2 → WeasyPrint. Executive PDF (1 page, plain English, top 3). Technical HTML (full session table, CVE/RFC links, vendor config diffs, the confusion matrix). JSON + escaped CEF export (one event per finding + a `VS-CLEAN` event per healthy tunnel so SIEM never loses a session). |
 | **6** | `frontend/` | Next.js / Tailwind / D3 / Recharts. Upload, capture history, session table (sortable, CRITICAL rows red, attacked sessions flagged), **D3 force-directed peer graph** coloured by worst-session risk, session drilldown with attack indicators and evidence frames, aggregate charts, **live capture** (interface or replay) over WebSocket, two-pcap historical diff, export panel. Responsive down to phone width. |
 
@@ -102,7 +102,7 @@ config diffs → SIEM export → risk-propagating peer graph.
   rules, anomalies, Analysis module, reports, API, jobs, live capture, the
   Docker testbed), **57** vitest unit/component tests, **26** Cypress
   end-to-end tests against the real stack. CI runs all three on every push.
-- **18** security rules, each tied to a CVE / RFC / NIST reference.
+- **21** security rules, each tied to a CVE / RFC / NIST reference, mapped onto **6** compliance baselines.
 - Traffic classifier: **macro-F1 0.98** on a held-out split of the 300-capture
   strongSwan dataset (up from 0.79 on the synthetic bootstrap it replaced). Read
   it as proof the pipeline works end to end, **not** as a field accuracy — see §8.
@@ -213,7 +213,7 @@ config diffs → SIEM export → risk-propagating peer graph.
 | 5 | Technical HTML report | ✅ |
 | 6 | JSON / CEF export | ✅ (anomalies included) |
 | 7 | Dashboard (peer graph, drilldown, anomalies, live capture, exports) | ✅ |
-| 8 | Demo video (3–5 min) | Script ready in `DEMO_SCRIPT.md`; recording pending |
+| 8 | Demo video (3–5 min) | ✅ <VIDEO-URL-PLACEHOLDER> (script: `DEMO_SCRIPT.md`) |
 | 9 | This document + product spec | ✅ (`docs/`, `SIH26160_LLD.md`) |
 | 10 | API reference (Swagger `/docs`) | ✅ |
 | 11 | Setup guide (`README.md`) | ✅ |

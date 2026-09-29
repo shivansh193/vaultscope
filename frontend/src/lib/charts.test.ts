@@ -107,7 +107,12 @@ describe("peerGraph", () => {
 describe("trafficMix and sessions without ESP", () => {
   it("leaves unclassified sessions out instead of calling them Other", () => {
     const quiet = session("q");
-    quiet.traffic_prediction = { predicted_type: "Other", confidence: 0, model_version: "no-esp-observed" };
+    quiet.traffic_prediction = {
+      ...quiet.traffic_prediction,
+      predicted_type: "Other",
+      confidence: 0,
+      model_version: "no-esp-observed",
+    };
     expect(trafficMix([quiet])).toEqual([]);
   });
 });

@@ -202,3 +202,28 @@ ikev6:
   generic: |
     IKEv1 over IPv6 is uncommon and error-prone. Migrate the tunnel to IKEv2,
     which has first-class IPv6 support and a simpler state machine.
+
+pqc:
+  strongswan: |
+    # swanctl.conf (strongSwan 6.0+): add an ML-KEM additional key exchange
+    proposals = aes256gcm16-prfsha384-ecp384-ke1_mlkem768
+    esp_proposals = aes256gcm16-ecp384-ke1_mlkem768
+  generic: |
+    Negotiate a hybrid key exchange: keep the classical (EC)DH group and add
+    ML-KEM-768 (or ML-KEM-1024) as an RFC 9370 Additional Key Exchange. Traffic
+    recorded today under a classical-only exchange can be decrypted once a
+    cryptographically relevant quantum computer exists; CNSA 2.0 sets the
+    migration timeline for national-security systems.
+
+drift:
+  strongswan: |
+    # Compare the loaded config with what is running:
+    swanctl --list-conns
+    swanctl --list-sas
+    # then reload the intended config and re-key
+    swanctl --load-all && swanctl --terminate --ike <conn> && swanctl --initiate --child <child>
+  generic: |
+    The gateway reports a different parameter from the one negotiated on the wire.
+    Either the running SA predates a config change (re-key it) or a peer is
+    overriding the intended policy. Reconcile the configuration on both peers,
+    re-establish the tunnel, and re-run this assessment.

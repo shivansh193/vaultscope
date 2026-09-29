@@ -76,6 +76,7 @@ from ._transforms import (
     canon_v1_esp_integrity,
     canon_v1_integrity,
     canon_v1_prf,
+    pqc_status,
 )
 from ._wire import IkeMessage, WireFormatError
 from .ikev2 import (  # shared pcap / source ingestion
@@ -296,6 +297,7 @@ def _analyse(messages: list[IkeMessage], ctx: dict) -> VPNSession:
 
     ike["msg_sizes"] = [m.length or 0 for m in messages]
     mark_unobserved(ike)
+    ike["pqc_status"] = pqc_status(ike.get("dh_group"), [])  # IKEv1 has no RFC 9370
     return VPNSession(
         session_id=f"{icookie.hex()}-{rcookie.hex()}",
         initiator_ip=ctx.get("initiator_ip") or "",

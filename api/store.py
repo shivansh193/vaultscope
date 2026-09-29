@@ -13,6 +13,8 @@ Switching to PostgreSQL at scale (spec Section 6) means replacing this module,
 not its callers -- the API only ever calls the functions defined here.
 """
 
+import datetime as dt
+import hashlib
 import json
 import os
 import sqlite3
@@ -54,6 +56,21 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS idx_events_session  ON events(session_id);
 CREATE INDEX IF NOT EXISTS idx_events_severity ON events(severity);
 CREATE INDEX IF NOT EXISTS idx_events_job      ON events(job_id);
+
+-- Append-only, hash-chained record of every analysis written. Each entry
+-- commits to the analysis digest, the capture's SHA-256 and the previous
+-- entry's hash, so editing a stored result or rewriting history is detectable
+-- (verify_audit_chain). Tamper-evident, not tamper-proof: anyone with write
+-- access to the file can rebuild the whole chain, so publish the head hash.
+CREATE TABLE IF NOT EXISTS audit_log (
+    seq             INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id          TEXT NOT NULL,
+    recorded_at     TEXT NOT NULL,
+    analysis_sha256 TEXT NOT NULL,
+    capture_sha256  TEXT,
+    prev_hash       TEXT NOT NULL,
+    entry_hash      TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS jobs (
     job_id       TEXT PRIMARY KEY,
@@ -107,6 +124,109 @@ def init_db() -> None:
                 conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} {decl}")
 
 
+GENESIS_HASH = "0" * 64
+
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _analysis_digest(sessions: list[str], events: list[str], stats: str) -> str:
+    """Digest over the stored documents, ordered so it can be recomputed from the DB."""
+    return _sha256(json.dumps([sorted(sessions), sorted(events), stats]).encode())
+
+
+def _entry_hash(seq, job_id, recorded_at, analysis, capture, prev) -> str:
+    return _sha256(f"{seq}|{job_id}|{recorded_at}|{analysis}|{capture or ''}|{prev}".encode())
+
+
+def _file_sha256(path: str | None) -> str | None:
+    if not path or not Path(path).is_file():
+        return None
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        while chunk := fh.read(1 << 20):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _append_audit(conn, job_id: str, analysis: str, capture_path: str | None) -> None:
+    last = conn.execute(
+        "SELECT analysis_sha256 FROM audit_log WHERE job_id = ? ORDER BY seq DESC LIMIT 1",
+        (job_id,),
+    ).fetchone()
+    if last is not None and last["analysis_sha256"] == analysis:
+        return  # a live tick that changed nothing adds no entry
+    head = conn.execute(
+        "SELECT seq, entry_hash FROM audit_log ORDER BY seq DESC LIMIT 1"
+    ).fetchone()
+    seq = (head["seq"] + 1) if head else 1
+    prev = head["entry_hash"] if head else GENESIS_HASH
+    recorded_at = dt.datetime.now(dt.UTC).isoformat()
+    capture = _file_sha256(capture_path)
+    conn.execute(
+        "INSERT INTO audit_log (seq, job_id, recorded_at, analysis_sha256, capture_sha256, "
+        "prev_hash, entry_hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            seq,
+            job_id,
+            recorded_at,
+            analysis,
+            capture,
+            prev,
+            _entry_hash(seq, job_id, recorded_at, analysis, capture, prev),
+        ),
+    )
+
+
+def audit_entries(job_id: str | None = None) -> list[dict]:
+    init_db()
+    with connect() as conn:
+        sql, args = "SELECT * FROM audit_log", ()
+        if job_id:
+            sql, args = sql + " WHERE job_id = ?", (job_id,)
+        return [dict(r) for r in conn.execute(sql + " ORDER BY seq", args)]
+
+
+def verify_audit_chain() -> dict:
+    """Recompute every link, then each live job's digest from its stored rows."""
+    entries = audit_entries()
+    prev, broken_at = GENESIS_HASH, None
+    for e in entries:
+        expected = _entry_hash(
+            e["seq"], e["job_id"], e["recorded_at"], e["analysis_sha256"], e["capture_sha256"], prev
+        )
+        if e["prev_hash"] != prev or e["entry_hash"] != expected:
+            broken_at = e["seq"]
+            break
+        prev = e["entry_hash"]
+
+    latest = {e["job_id"]: e["analysis_sha256"] for e in entries}
+    tampered = []
+    with connect() as conn:
+        for job_id, digest in latest.items():
+            job = conn.execute("SELECT stats FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
+            if job is None:
+                continue  # deleted jobs keep their history; nothing left to compare
+            sessions = [
+                r["document"]
+                for r in conn.execute("SELECT document FROM sessions WHERE job_id = ?", (job_id,))
+            ]
+            events = [
+                r["document"]
+                for r in conn.execute("SELECT document FROM events WHERE job_id = ?", (job_id,))
+            ]
+            if _analysis_digest(sessions, events, job["stats"]) != digest:
+                tampered.append(job_id)
+    return {
+        "ok": broken_at is None and not tampered,
+        "entries": len(entries),
+        "head_hash": entries[-1]["entry_hash"] if entries else GENESIS_HASH,
+        "chain_broken_at_seq": broken_at,
+        "tampered_jobs": tampered,
+    }
+
+
 def save_analysis(
     job_id: str,
     sessions: list[VPNSession],
@@ -122,13 +242,17 @@ def save_analysis(
     Replacement, not merge: live capture re-analyses its growing file on every
     tick, and the newest analysis of the whole file is the truth.
     """
+    session_docs = [s.model_dump_json() for s in sessions]
+    events = list(events)
+    event_docs = [e.model_dump_json() for e in events]
+    stats_doc = stats.model_dump_json()
     with connect() as conn:
         conn.execute(
             "INSERT INTO jobs (job_id, capture_file, source, stats, capture_path) "
             "VALUES (?, ?, ?, ?, ?) ON CONFLICT(job_id) DO UPDATE SET "
             "capture_file = excluded.capture_file, source = excluded.source, "
             "stats = excluded.stats, capture_path = excluded.capture_path",
-            (job_id, capture_file, source, stats.model_dump_json(), capture_path),
+            (job_id, capture_file, source, stats_doc, capture_path),
         )
         conn.execute("DELETE FROM sessions WHERE job_id = ?", (job_id,))
         conn.execute("DELETE FROM events WHERE job_id = ?", (job_id,))
@@ -141,15 +265,21 @@ def save_analysis(
                     s.session_id,
                     s.security_assessment.overall_severity,
                     s.security_assessment.risk_score,
-                    s.model_dump_json(),
+                    doc,
                 )
-                for s in sessions
+                for s, doc in zip(sessions, session_docs, strict=True)
             ],
         )
         conn.executemany(
             "INSERT OR REPLACE INTO events "
             "(anomaly_id, job_id, session_id, severity, document) VALUES (?, ?, ?, ?, ?)",
-            [(e.anomaly_id, job_id, e.session_id, e.severity, e.model_dump_json()) for e in events],
+            [
+                (e.anomaly_id, job_id, e.session_id, e.severity, doc)
+                for e, doc in zip(events, event_docs, strict=True)
+            ],
+        )
+        _append_audit(
+            conn, job_id, _analysis_digest(session_docs, event_docs, stats_doc), capture_path
         )
 
 
@@ -281,5 +411,5 @@ def reset() -> None:
     """Drop all rows. Test-support only."""
     init_db()
     with connect() as conn:
-        for table in ("sessions", "events", "jobs"):
+        for table in ("sessions", "events", "jobs", "audit_log"):
             conn.execute(f"DELETE FROM {table}")

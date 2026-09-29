@@ -179,3 +179,23 @@ def test_rows_to_matrix_orders_columns():
     row["pkt_size_mean"] = 123.0
     mat = rows_to_matrix([row])
     assert mat[0][FEATURE_NAMES.index("pkt_size_mean")] == 123.0
+
+
+def test_explain_ranks_features_that_support_the_prediction():
+    from core.classifiers._synthetic import synth_flow
+    from core.classifiers.traffic import TrafficClassifier
+    from core.flow import feature_vector
+
+    rows, y = [], []
+    for k, cls in enumerate(["VoIP", "Web", "ICMP"] * 20):
+        rows.append(feature_vector(synth_flow(cls, seed=k)))
+        y.append(cls)
+    clf = TrafficClassifier.train(rows, y, algo="rf", seed=0)
+    clf.metrics["feature_means"] = {
+        n: sum(r[n] for r in rows) / len(rows) for n in clf.feature_names
+    }
+    label, _ = clf.predict(rows[0])
+    top = clf.explain(rows[0], label)
+    assert 0 < len(top) <= 3
+    assert abs(sum(t["weight"] for t in top) - 1.0) < 1e-3
+    assert all(t["feature"] in clf.feature_names for t in top)

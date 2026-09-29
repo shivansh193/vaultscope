@@ -70,8 +70,17 @@ def pcap_table(
     labels_dir: Path = LABELS_DIR, pcaps_dir: Path = PCAPS_DIR
 ) -> tuple[list[FeatureRow], list[str]]:
     """Feature rows from the captured dataset. Empty until Stage 0 has run."""
+    x, labels = pcap_table_with_labels(labels_dir, pcaps_dir)
+    return x, [label["traffic_class"] for label in labels]
+
+
+def pcap_table_with_labels(
+    labels_dir: Path = LABELS_DIR, pcaps_dir: Path = PCAPS_DIR
+) -> tuple[list[FeatureRow], list[dict]]:
+    """Feature rows plus each row's full ground-truth label (config included),
+    so evaluation can hold out whole configurations rather than random rows."""
     x: list[FeatureRow] = []
-    y: list[str] = []
+    y: list[dict] = []
     for label_path in sorted(labels_dir.glob("*.json")):
         label = json.loads(label_path.read_text())
         cls = label.get("traffic_class")
@@ -89,7 +98,7 @@ def pcap_table(
         )
         if best is not None:
             x.append(best)
-            y.append(cls)
+            y.append({**label, "stem": label_path.stem})
     return x, y
 
 

@@ -44,15 +44,17 @@ from pydantic import BaseModel, Field
 from api import live, store
 from core import live as sources
 from core.classifiers import model_info
+from core.gateway_state import apply_gateway_state, parse_gateway_state
 from core.models import (
     AnomalyEvent,
     CaptureStats,
     JobSummary,
+    SecurityAssessment,
     Severity,
     VPNSession,
 )
 from core.pipeline import analyze_capture
-from core.rules.engine import load_rules
+from core.rules.engine import evaluate_rules, load_rules
 from reporting import export, render
 
 VERSION = "1.1.0"
@@ -208,6 +210,37 @@ class DiffResponse(BaseModel):
     degraded: list[DegradedSession]
 
 
+class GatewayStateResponse(BaseModel):
+    records: int
+    matched_sessions: int
+    filled: dict[str, int]
+    mismatches: list[str]
+    unmatched_records: list[dict]
+
+
+class SimulateRequest(BaseModel):
+    """IKE parameters to change on a stored session before re-scoring it."""
+
+    session_id: str
+    job_id: str | None = None
+    encryption: str | None = None
+    integrity: str | None = None
+    dh_group: str | None = None
+    pfs_status: Literal["enabled", "disabled", "unknown"] | None = None
+    version: Literal["IKEv1", "IKEv2"] | None = None
+    aggressive_mode: bool | None = None
+    auth_method: Literal["PSK", "RSA", "DSS", "ECDSA", "EAP", "XAUTH"] | None = None
+    pqc_status: Literal["hybrid", "classical", "unknown"] | None = None
+
+
+class SimulateResponse(BaseModel):
+    before: SecurityAssessment
+    after: SecurityAssessment
+    changed: dict[str, list]  # field -> [before, after]
+    resolved_rules: list[str]
+    new_rules: list[str]
+
+
 class LiveStartRequest(BaseModel):
     source: Literal["replay", "interface"] = "replay"
     interface: str | None = Field(None, description="NIC name, for source=interface")
@@ -252,6 +285,18 @@ def model_metrics() -> dict:
         return json.loads(_METRICS_PATH.read_text())
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
+
+
+@app.get("/audit", tags=["system"])
+def audit(job_id: str | None = None) -> list[dict]:
+    """Hash-chained log of every stored analysis (oldest first)."""
+    return store.audit_entries(job_id)
+
+
+@app.get("/audit/verify", tags=["system"])
+def audit_verify() -> dict:
+    """Recompute the chain and each job's analysis digest; ``ok`` is false on any mismatch."""
+    return store.verify_audit_chain()
 
 
 @app.get("/rules", response_model=list[Rule], tags=["system"])
@@ -364,6 +409,34 @@ def delete_job(job_id: str) -> None:
         raise HTTPException(404, f"no job {job_id}")
 
 
+@app.post("/jobs/{job_id}/gateway-state", response_model=GatewayStateResponse, tags=["jobs"])
+async def import_gateway_state(job_id: str, file: UploadFile = File(...)) -> GatewayStateResponse:
+    """Attach gateway output (``swanctl --list-sas`` / ``--list-conns``, ``swanctl.conf``,
+    ``ip xfrm state``) to a job: fills what the capture hid, flags drift (R21), re-scores."""
+    job = store.get_job(job_id)
+    if job is None:
+        raise HTTPException(404, f"no job {job_id}")
+    text = (await file.read(2 << 20)).decode("utf-8", errors="replace")
+    records = parse_gateway_state(text)
+    if not records:
+        raise HTTPException(422, "no swanctl, swanctl.conf or ip xfrm state output recognised")
+    sessions = store.list_sessions(job_id=job_id, limit=100_000)
+    summary = apply_gateway_state(sessions, records)
+    for session in sessions:
+        session.security_assessment = evaluate_rules(session)
+    await asyncio.to_thread(
+        store.save_analysis,
+        job_id,
+        sessions,
+        store.list_events(job_id=job_id),
+        job.stats,
+        capture_file=job.capture_file,
+        source=job.source,
+        capture_path=str(kept) if (kept := store.capture_path(job_id)) else None,
+    )
+    return GatewayStateResponse(**summary)
+
+
 @app.get("/jobs/{job_id}/capture", tags=["jobs"])
 def download_capture(job_id: str) -> FileResponse:
     """The capture a job analysed -- evidence frame numbers index into this file."""
@@ -394,6 +467,42 @@ def get_session(session_id: str, job_id: str | None = None) -> VPNSession:
     if session is None:
         raise HTTPException(404, f"no session {session_id}")
     return session
+
+
+@app.post("/simulate", response_model=SimulateResponse, tags=["analysis"])
+def simulate(req: SimulateRequest) -> SimulateResponse:
+    """What-if: re-score a stored session with some IKE parameters changed.
+
+    Nothing is stored; the rules, exposure and compliance are re-evaluated on a
+    copy, so an operator can see what a proposed config change would fix.
+    """
+    session = store.get_session(req.session_id, job_id=req.job_id)
+    if session is None:
+        raise HTTPException(404, f"no session {req.session_id}")
+    overrides = req.model_dump(exclude={"session_id", "job_id"}, exclude_none=True)
+    changed = {
+        k: [getattr(session.ike, k), v]
+        for k, v in overrides.items()
+        if getattr(session.ike, k) != v
+    }
+    ike = session.ike.model_copy(
+        update={
+            **overrides,
+            # a value the operator set is a hypothesis, not an inference
+            "inferred_fields": [f for f in session.ike.inferred_fields if f not in overrides],
+        }
+    )
+    after = evaluate_rules(session.model_copy(update={"ike": ike}))
+    # Re-scored rather than read back, so a rule-table change since ingest
+    # does not show up as an effect of the override.
+    before = evaluate_rules(session)
+    return SimulateResponse(
+        before=before,
+        after=after,
+        changed=changed,
+        resolved_rules=[r for r in before.triggered_rules if r not in after.triggered_rules],
+        new_rules=[r for r in after.triggered_rules if r not in before.triggered_rules],
+    )
 
 
 @app.get("/events", response_model=list[AnomalyEvent], tags=["analysis"])

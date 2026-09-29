@@ -23,7 +23,12 @@ from typing import Literal
 
 from core.anomalies import detect_anomalies
 from core.capture import read_capture
-from core.classifiers import predict_ike_params, predict_traffic_type
+from core.classifiers import (
+    MODE_MIN_CONFIDENCE,
+    predict_ike_params,
+    predict_mode,
+    predict_traffic_type,
+)
 from core.flow import Flow, busiest_flow, flows_from_esp
 from core.ike_parser import parse_ikev1_sessions, parse_ikev2_sessions
 from core.ike_parser._transforms import EXCHANGE_IKE_SA_INIT
@@ -91,6 +96,23 @@ def _classify(flow: Flow | None) -> tuple[FlowFeatures, TrafficPrediction]:
     return features, TrafficPrediction(**predict_traffic_type(features.model_dump()))
 
 
+def _infer_mode(session: VPNSession) -> None:
+    """Fill an unobserved tunnel/transport mode from ESP sizes, marked inferred.
+
+    IKEv2 negotiates mode inside the encrypted IKE_AUTH; tunnel mode's extra
+    inner IP header still shows in the ESP packet sizes.
+    """
+    if session.ike.mode != "unknown":
+        return
+    guess = predict_mode(
+        session.flow_features.model_dump(), session.ike.ip_version, session.ike.encryption
+    )
+    if guess is None or guess[1] < MODE_MIN_CONFIDENCE:
+        return
+    session.ike.mode, session.ike.mode_confidence = guess
+    session.ike.inferred_fields = sorted({*session.ike.inferred_fields, "mode"})
+
+
 def _orphan_sessions(orphans: list) -> list[VPNSession]:
     """One mid-session record per peer pair whose ESP no SA in the capture owns.
 
@@ -128,6 +150,8 @@ def analyze_capture(path: str | Path, source: CaptureSource = "pcap_upload") -> 
         for session in _parse(raw):
             _fill_from_structure(session, raw)
             session.flow_features, session.traffic_prediction = _classify(flow)
+            if flow is not None:
+                _infer_mode(session)
             sessions.append(session)
 
     sessions += _orphan_sessions(ingested.orphan_esp)

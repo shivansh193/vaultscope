@@ -17,7 +17,7 @@
   <div>
     <div class="sev sev-{{ overall_severity }}">{{ overall_severity }}</div>
     <div class="score-caption">
-      Posture score out of 100 across {{ summary.session_count }}
+      Posture score out of 100 (mean Risk Score) across {{ summary.session_count }}
       VPN session{{ '' if summary.session_count == 1 else 's' }}. Higher is safer.
     </div>
   </div>
@@ -69,6 +69,22 @@ anomal{{ 'y was' if anomalies|length == 1 else 'ies were' }} observed in this ca
 </ul>
 {% endif %}
 
+<h2>Metadata exposure</h2>
+<p class="small">Encryption hides what is said, not that it is said. On a 0&ndash;100 scale an
+observer's view of these tunnels scores {{ summary.metadata_exposure.mean_score }} on average
+{%- if summary.metadata_exposure.signals %}; what leaks most:
+{% for sig, n in summary.metadata_exposure.signals.items() %}{{ sig.replace('_', ' ') }} ({{ n }} session{{ '' if n == 1 else 's' }}){% if not loop.last %}, {% endif %}{% endfor %}{% endif %}.</p>
+
+{% if summary.compliance %}
+<h2>Configuration compliance</h2>
+<table>
+  <tr><th>Baseline</th><th>Sessions passing</th></tr>
+  {% for c in summary.compliance %}
+  <tr><td>{{ c.name }}</td><td>{{ c.pass }} of {{ summary.session_count }}{% if c.not_assessed %} <span class="muted small">({{ c.not_assessed }} not assessable)</span>{% endif %}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+
 <h2>Recommended action</h2>
 <ol>
   {% for action in actions %}<li>{{ action }}</li>{% endfor %}
@@ -78,7 +94,7 @@ anomal{{ 'y was' if anomalies|length == 1 else 'ies were' }} observed in this ca
   <strong>Scope and confidence.</strong> Cryptographic parameters are read directly
   from the IKE negotiation and are deterministic. Traffic types inside ESP are
   inferred from encrypted-traffic metadata and are probabilistic &mdash;
-  {% if summary.mean_ai_confidence is not none %}mean classifier confidence across the
+  {% if summary.mean_ai_confidence is not none %}mean AI Confidence Score across the
   {{ summary.classified_count }} session{{ '' if summary.classified_count == 1 else 's' }} that
   carried ESP is {{ '%.0f'|format(summary.mean_ai_confidence * 100) }}%{% else %}no session in this
   capture carried ESP, so none was classified{% endif %}. Treat traffic-type

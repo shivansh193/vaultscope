@@ -166,7 +166,23 @@ _DH_NAMES = {
     21: "ECP521",
     31: "Curve25519",
     32: "Curve448",
+    # ML-KEM (FIPS 203) in the IKEv2 Key Exchange Method registry.
+    35: "ML-KEM-512",
+    36: "ML-KEM-768",
+    37: "ML-KEM-1024",
 }
+
+# RFC 9370 Additional Key Exchange 1..7 transform types.
+TRANSFORM_TYPES_ADDKE = range(6, 13)
+
+
+def pqc_status(dh_group: str | None, additional: list[str]) -> str:
+    """hybrid / classical / unknown for a parsed key exchange (feeds R20)."""
+    if not dh_group or dh_group == "unknown":
+        return "unknown"
+    if additional or dh_group.startswith("ML-KEM"):
+        return "hybrid"
+    return "classical"
 
 
 def canon_dh_group(group_num: int | None) -> str | None:

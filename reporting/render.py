@@ -21,6 +21,7 @@ from reporting import aggregate
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 CONFUSION_MATRIX_PATH = Path(__file__).resolve().parent.parent / "models" / "confusion_matrix.json"
+HELDOUT_EVAL_PATH = CONFUSION_MATRIX_PATH.with_name("heldout_eval.json")
 
 # Plain-English gloss per rule for the executive report. The technical report
 # uses the rule descriptions verbatim; a DG-level reader needs the consequence.
@@ -43,6 +44,9 @@ PLAIN_ENGLISH: dict[str, str] = {
     "R16": "The peer's authentication certificate has expired. The tunnel is trusting a credential that is no longer valid; renew it immediately.",
     "R17": "Dead Peer Detection is not enabled, so failed tunnels are not cleaned up and half-open sessions build up over time.",
     "R18": "This tunnel runs IKEv1 over IPv6 -- an unusual combination that is frequently misconfigured. Move it to IKEv2.",
+    "R19": "This tunnel announces who is connecting in the clear before encryption starts, so anyone watching the network learns the identities of both ends.",
+    "R20": "The key exchange is classical only. An adversary recording this traffic today could decrypt it once a large quantum computer exists; add a post-quantum (ML-KEM) key exchange.",
+    "R21": "The gateway says this tunnel is configured one way, but it was negotiated another way on the wire. Either a config change never took effect or a peer is overriding policy.",
 }
 
 SEVERITY_PLAIN_ENGLISH: dict[str, str] = {
@@ -64,14 +68,18 @@ def _env() -> Environment:
     )
 
 
-def _load_confusion_matrix() -> dict | None:
-    """Stage 4b metrics if P2 has trained a model; None is a valid state."""
-    if not CONFUSION_MATRIX_PATH.exists():
+def _load_json(path: Path) -> dict | None:
+    """A model artifact if it has been generated; None is a valid state."""
+    if not path.exists():
         return None
     try:
-        return json.loads(CONFUSION_MATRIX_PATH.read_text())
+        return json.loads(path.read_text())
     except (json.JSONDecodeError, OSError):
         return None
+
+
+def _load_confusion_matrix() -> dict | None:
+    return _load_json(CONFUSION_MATRIX_PATH)
 
 
 def _verdict(summary: dict, overall: str) -> str:
@@ -147,6 +155,7 @@ def _context(
         "plain_english": PLAIN_ENGLISH,
         "severity_plain_english": SEVERITY_PLAIN_ENGLISH,
         "confusion_matrix": _load_confusion_matrix(),
+        "heldout": _load_json(HELDOUT_EVAL_PATH),
         "anomalies": ranked,
         "anomaly_kinds": sorted(
             {e.anomaly_type for e in ranked},

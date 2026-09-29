@@ -84,6 +84,20 @@ class IkeParams(BaseModel):
     # On-wire byte length of each IKE message in this SA, in capture order.
     # Implementations pad differently -- a tertiary vendor fingerprint.
     msg_sizes: list[int] = Field(default_factory=list)
+    # Post-quantum readiness of the IKE key exchange. "hybrid" when an RFC 9370
+    # Additional Key Exchange (or an ML-KEM group) was negotiated alongside the
+    # classical one, "classical" when the accepted proposal had none, "unknown"
+    # when no IKE_SA_INIT proposal was readable. R20 reads it.
+    pqc_status: Literal["hybrid", "classical", "unknown"] = "unknown"
+    # RFC 9370 ADDKE transforms from the accepted proposal, canonical group names.
+    additional_key_exchanges: list[str] = Field(default_factory=list)
+    # Confidence of an inferred ``mode`` (present in inferred_fields); None
+    # when mode came off the wire or was not inferred.
+    mode_confidence: float | None = None
+    # Fields filled from imported gateway state (core.gateway_state) rather than
+    # the wire, and wire-vs-gateway disagreements ("field: wire X, source Y").
+    gateway_fields: list[str] = Field(default_factory=list)
+    gateway_mismatches: list[str] = Field(default_factory=list)
 
 
 class FlowFeatures(BaseModel):
@@ -110,6 +124,20 @@ class TrafficPrediction(BaseModel):
     predicted_type: Literal["VoIP", "Video", "Web", "Email", "ICMP", "Chat", "Other"] = "Other"
     confidence: float = 0.0
     model_version: str = "untrained"
+    # True when the winning probability fell below the abstain threshold: the
+    # class above is the best guess, not a claim, and reports say "uncertain".
+    abstained: bool = False
+    # Features that pushed this prediction hardest (largest first) -- which
+    # side-channels gave the tunnel away. Empty when nothing was predicted.
+    top_features: list["FeatureContribution"] = Field(default_factory=list)
+
+
+class FeatureContribution(BaseModel):
+    feature: str
+    value: float
+    # Model importance weighted by how far this flow sits from the training
+    # mean for that feature; relative, sums to 1 across top_features.
+    weight: float
 
 
 class Finding(BaseModel):
@@ -131,6 +159,39 @@ class ThreatMatrixEntry(BaseModel):
     impact: Literal["Low", "Med", "High"]
 
 
+class ExposureSignal(BaseModel):
+    """One thing a passive observer learns without breaking the encryption."""
+
+    signal: Literal["traffic_type", "identity", "implementation", "endpoints", "timing"]
+    level: Literal["Low", "Med", "High"]
+    detail: str
+
+
+class MetadataExposure(BaseModel):
+    """PS (d) "metadata exposure": what leaks around the ciphertext.
+
+    ``score`` runs 0 (nothing beyond the unavoidable) to 100 (an observer can
+    tell who, with what, and doing what). It is reported beside the risk score,
+    not folded into it: exposure is inherent to IPsec, misconfiguration is not.
+    """
+
+    score: int = 0
+    level: Literal["Low", "Med", "High"] = "Low"
+    signals: list[ExposureSignal] = Field(default_factory=list)
+
+
+class ComplianceResult(BaseModel):
+    """Pass / fail of one session against one published crypto baseline."""
+
+    baseline_id: str
+    name: str
+    status: Literal["pass", "fail", "not_assessed"]
+    # Rule ids and requirement checks that failed; empty on pass.
+    violations: list[str] = Field(default_factory=list)
+    # Requirements that could not be checked because the capture hid the field.
+    unassessed: list[str] = Field(default_factory=list)
+
+
 class SecurityAssessment(BaseModel):
     """Stage 4c + Stage 5 output: what is wrong with this session and how bad."""
 
@@ -140,6 +201,8 @@ class SecurityAssessment(BaseModel):
     findings: list[Finding] = Field(default_factory=list)
     threat_matrix: list[ThreatMatrixEntry] = Field(default_factory=list)
     ai_confidence: float = 0.0
+    metadata_exposure: MetadataExposure = Field(default_factory=MetadataExposure)
+    compliance: list[ComplianceResult] = Field(default_factory=list)
 
 
 class Reports(BaseModel):

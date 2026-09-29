@@ -19,7 +19,7 @@
 <table>
   <tr>
     <th>Session</th><th>Peers</th><th>IKE</th><th>Encryption</th><th>DH</th>
-    <th>PFS</th><th>Traffic</th><th>Score</th><th>Severity</th>
+    <th>PFS</th><th>Traffic &middot; AI Confidence Score</th><th>Risk Score</th><th>Severity</th>
   </tr>
   {% for s in sessions %}
   <tr>
@@ -30,14 +30,16 @@
     <td>{{ s.ike.dh_group }}{% if 'dh_group' in s.ike.inferred_fields %} <span class="muted small">(inferred)</span>{% endif %}</td>
     <td>{{ s.ike.pfs_status }}</td>
     <td>{% if s.traffic_prediction.model_version == 'no-esp-observed' %}<span class="muted">no ESP</span>{% else %}{{ s.traffic_prediction.predicted_type }}
-        <span class="muted small">{{ '%.0f'|format(s.traffic_prediction.confidence * 100) }}%</span>{% endif %}</td>
+        <span class="muted small">{{ '%.0f'|format(s.traffic_prediction.confidence * 100) }}%</span>
+        {%- if s.traffic_prediction.abstained %} <span class="muted small">(uncertain)</span>{% endif %}
+        {%- if s.traffic_prediction.top_features %}<br><span class="muted small">via {{ s.traffic_prediction.top_features|map(attribute='feature')|join(', ') }}</span>{% endif %}{% endif %}</td>
     <td>{{ s.security_assessment.risk_score }}</td>
     <td class="sev sev-{{ s.security_assessment.overall_severity }}">{{ s.security_assessment.overall_severity }}</td>
   </tr>
   {% endfor %}
 </table>
 
-<h2>Threat matrix</h2>
+<h2>Threat Matrix</h2>
 {% if summary.threat_matrix %}
 <table>
   <tr><th>Threat</th><th>Likelihood</th><th>Impact</th></tr>
@@ -46,6 +48,45 @@
   {% endfor %}
 </table>
 {% else %}<p class="muted">No threats identified.</p>{% endif %}
+
+<h2>Metadata exposure</h2>
+<p class="small muted">What a passive observer learns without breaking the encryption: traffic type
+from packet sizes and timing, peer identities, gateway implementation, endpoints and activity.
+Scored 0 (nothing beyond the unavoidable) to 100, reported beside the Risk Score rather than in it.
+Fleet mean {{ summary.metadata_exposure.mean_score }}/100.</p>
+<table>
+  <tr><th>Session</th><th>Exposure</th><th>What leaks</th></tr>
+  {% for s in sessions %}
+  {% set e = s.security_assessment.metadata_exposure %}
+  <tr>
+    <td><code>{{ s.session_id }}</code></td>
+    <td>{{ e.score }} <span class="muted small">{{ e.level }}</span></td>
+    <td class="small">{% for sig in e.signals %}<strong>{{ sig.level }}</strong> {{ sig.detail }}{% if not loop.last %}<br>{% endif %}{% else %}<span class="muted">nothing beyond the tunnel itself</span>{% endfor %}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h2>Configuration compliance</h2>
+{% if summary.compliance %}
+<table>
+  <tr><th>Baseline</th><th>Pass</th><th>Fail</th><th>Not assessed</th><th>Most common violations</th></tr>
+  {% for c in summary.compliance %}
+  <tr>
+    <td>{{ c.name }}</td><td>{{ c.pass }}</td><td>{{ c.fail }}</td><td>{{ c.not_assessed }}</td>
+    <td class="small">{{ c.violations|join(', ') or '&mdash;'|safe }}</td>
+  </tr>
+  {% endfor %}
+</table>
+<p class="small muted">Mapping of rules to each baseline is VaultScope's reading of the published
+algorithm guidance, not a certification; rows marked indicative map general guidance. A requirement
+whose field the capture never revealed is counted as not assessed, never as a failure.</p>
+{% else %}<p class="muted">No sessions to assess.</p>{% endif %}
+
+<h2>Key exchange method &amp; post-quantum readiness</h2>
+<p class="small">
+{% for status, n in summary.pqc_readiness.items() %}{{ n }} {{ status }}{% if not loop.last %} &middot; {% endif %}{% else %}<span class="muted">no sessions</span>{% endfor %}
+&mdash; <span class="muted">hybrid = an RFC 9370 additional key exchange or ML-KEM group was negotiated;
+classical = recorded traffic is exposed to future quantum decryption (rule R20).</span></p>
 
 <h2>Runtime anomalies</h2>
 {% if anomalies %}
@@ -91,7 +132,7 @@ open it in Wireshark and go to the frame to verify.</p>
   {% endif %}
 {% endfor %}
 
-<h2>Full IKE parameter decode</h2>
+<h2>Security Association characteristics (full IKE decode)</h2>
 {% for s in sessions %}
 <h3><code>{{ s.session_id }}</code>
   <span class="muted small">{{ s.timestamp or 'time unknown' }}
@@ -124,6 +165,22 @@ open it in Wireshark and go to the frame to verify.</p>
 <p class="small muted">Model {{ confusion_matrix.model_version | default('unspecified') }}
   {%- if confusion_matrix.accuracy %} &middot; overall accuracy
   {{ '%.1f'|format(confusion_matrix.accuracy * 100) }}%{% endif %}</p>
+{% if heldout %}
+<h3>Held-out evaluation</h3>
+<p class="small muted">The figure above is one random split. Below, whole groups of captures are
+held out (every capture of one cipher, DH group, mode, IP version, or configuration), the model is
+trained on the rest and scored on what it never saw. "Without volume" drops packet count, rate and
+duration, which the fixed-rate generators make an easy shortcut.</p>
+<table>
+  <tr><th>Scheme</th><th>Macro-F1</th><th>Without volume</th></tr>
+  {% for scheme, r in heldout.traffic_type.all_features.items() %}
+  <tr><td>{{ scheme.replace('_', ' ') }}</td><td>{{ r.pooled.f1_macro }}</td>
+      <td>{{ heldout.traffic_type.without_volume_features[scheme].pooled.f1_macro }}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% if summary.abstained_count %}<p class="small muted">{{ summary.abstained_count }} prediction{{ '' if summary.abstained_count == 1 else 's' }}
+fell below the confidence threshold and {{ 'is' if summary.abstained_count == 1 else 'are' }} marked uncertain.</p>{% endif %}
 {% else %}
 <p class="muted">No trained classifier metrics available &mdash;
 the Stage 4b model has not been trained yet,

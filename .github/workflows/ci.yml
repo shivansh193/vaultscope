@@ -28,6 +28,8 @@ jobs:
             tshark libpango-1.0-0 libpangoft2-1.0-0
       - run: pip install -r requirements-dev.txt
       - run: ruff check . && ruff format --check .
+      # Labels match the schema and every one has a published, hashed capture.
+      - run: python scripts/validate_dataset.py
       # The testbed suite drives real strongSwan containers and the dataset suite
       # reads the 129 MB capture corpus; both run locally, not on every push.
       - run: pytest -m "not slow" --ignore=tests/testbed --cov --cov-report=term-missing:skip-covered

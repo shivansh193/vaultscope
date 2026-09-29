@@ -47,6 +47,41 @@ class TrafficClassifier:
         probs = self.model.predict_proba(self._row(features))[0]
         return {cls: float(p) for cls, p in zip(self.classes, probs, strict=False)}
 
+    def explain(self, features: dict, label: str, top: int = 3) -> list[dict]:
+        """The features that most supported ``label`` for this one flow.
+
+        Occlusion: swap each feature for its training-set mean and measure how
+        far the winning probability drops. Falls back to global importance for
+        a model saved before feature means were recorded.
+        """
+        means = self.metrics.get("feature_means")
+        if not means:
+            ranked = sorted(self.feature_importances().items(), key=lambda kv: -kv[1])
+            scores = dict(ranked[:top])
+        else:
+            base = self._row(features)[0]
+            rows = []
+            for i, name in enumerate(self.feature_names):
+                row = list(base)
+                row[i] = means.get(name, row[i])
+                rows.append(row)
+            col = self.classes.index(label)
+            p0 = self.model.predict_proba([base])[0][col]
+            drops = p0 - self.model.predict_proba(rows)[:, col]
+            scores = {
+                n: float(d)
+                for n, d in sorted(
+                    zip(self.feature_names, drops, strict=False), key=lambda kv: -kv[1]
+                )
+                if d > 0
+            }
+            scores = dict(list(scores.items())[:top])
+        total = sum(scores.values()) or 1.0
+        return [
+            {"feature": n, "value": float(features.get(n, 0.0)), "weight": round(w / total, 4)}
+            for n, w in scores.items()
+        ]
+
     def feature_importances(self) -> dict[str, float]:
         imp = getattr(self.model, "feature_importances_", None)
         if imp is None:

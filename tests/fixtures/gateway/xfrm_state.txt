@@ -1,0 +1,12 @@
+src 10.90.10.2 dst 10.90.10.3
+	proto esp spi 0xc6651ea7 reqid 1 mode transport
+	replay-window 0 
+	aead rfc4106(gcm(aes)) 0x0000000000000000000000000000000000000000000000000000000000000000 128
+	anti-replay context: seq 0x0, oseq 0x7, bitmap 0x00000000
+	sel src 10.90.10.2/32 dst 10.90.10.3/32 
+src 10.90.10.3 dst 10.90.10.2
+	proto esp spi 0xc34da8eb reqid 1 mode transport
+	replay-window 32 
+	aead rfc4106(gcm(aes)) 0x0000000000000000000000000000000000000000000000000000000000000000 128
+	anti-replay context: seq 0x7, oseq 0x0, bitmap 0x0000007f
+	sel src 10.90.10.3/32 dst 10.90.10.2/32 

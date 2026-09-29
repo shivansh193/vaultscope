@@ -180,3 +180,35 @@
   when:
     - {field: ike.version, op: eq, value: IKEv1}
     - {field: ike.ip_version, op: eq, value: IPv6}
+
+- id: R19
+  description: "IKEv1 Aggressive Mode -- peer identities cross the wire in cleartext"
+  severity: MEDIUM
+  cve: null
+  standard: "RFC 2409 s5.4, NIST SP 800-77r1 s4"
+  remediation: ikev1
+  # Distinct from R06: whatever the auth method, Aggressive Mode sends the ID
+  # payload before any key exists, so a passive observer learns who connects.
+  when:
+    - {field: ike.version, op: eq, value: IKEv1}
+    - {field: ike.aggressive_mode, op: eq, value: true}
+
+- id: R20
+  description: "Classical-only key exchange -- harvest-now-decrypt-later exposure to a quantum adversary"
+  severity: LOW
+  cve: null
+  standard: "RFC 9370, CNSA 2.0, NIST IR 8547"
+  remediation: pqc
+  # `eq classical`, never `!= hybrid`: an unreadable proposal is not evidence.
+  when:
+    - {field: ike.pqc_status, op: eq, value: classical}
+
+- id: R21
+  description: "Gateway configuration disagrees with what was negotiated on the wire -- configuration drift"
+  severity: MEDIUM
+  cve: null
+  standard: "NIST SP 800-77r1 s5 (configuration management)"
+  remediation: drift
+  # Only fires after gateway state was imported (core/gateway_state.py).
+  when:
+    - {field: ike.gateway_mismatches, op: nonempty, value: true}

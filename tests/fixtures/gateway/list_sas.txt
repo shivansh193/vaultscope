@@ -1,0 +1,11 @@
+vaultscope: #1, ESTABLISHED, IKEv2, 3150ddecfe302c27_i* b7399df688decd18_r
+  local  'alice' @ 10.90.10.2[4500]
+  remote 'bob' @ 10.90.10.3[4500]
+  AES_GCM_16-256/PRF_HMAC_SHA2_384/MODP_1024
+  established 2s ago, rekeying in 13252s
+  net: #1, reqid 1, INSTALLED, TRANSPORT, ESP:AES_GCM_16-256
+    installed 2s ago, rekeying in 3410s, expires in 3958s
+    in  c34da8eb,    384 bytes,     6 packets,     0s ago
+    out c6651ea7,    384 bytes,     6 packets,     0s ago
+    local  10.90.10.2/32
+    remote 10.90.10.3/32

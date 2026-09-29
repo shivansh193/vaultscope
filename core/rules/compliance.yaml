@@ -1,0 +1,41 @@
+# Compliance baselines: which rule findings (and which extra requirements)
+# break each published crypto baseline.
+#
+# Data, not code -- see core/rules/compliance.py. A baseline fails when any rule
+# in `violated_by` fired, or any `requires` clause (same {field, op, value}
+# shape as rules.yaml) does not hold. A clause whose field the capture never
+# revealed ("unknown" / None) is listed as unassessed, never as a failure.
+#
+# The mapping is VaultScope's reading of each document's algorithm guidance,
+# not a certification. The CERT-In and ITSAR rows are marked indicative: they
+# map general cryptographic guidance, not clause-by-clause IPsec requirements.
+
+- id: NIST-800-77r1
+  name: "NIST SP 800-77r1 (Guide to IPsec VPNs)"
+  violated_by: [R01, R02, R03, R04, R05, R06, R07, R08, R09, R10, R11, R13, R15, R16, R19, R21]
+
+- id: NIST-800-131A
+  name: "NIST SP 800-131A r2 (algorithm transitions)"
+  violated_by: [R01, R02, R03, R04, R05, R08, R16]
+
+- id: BSI-TR-02102-3
+  name: "BSI TR-02102-3 (IPsec / IKEv2)"
+  violated_by: [R01, R02, R03, R04, R05, R06, R07, R08, R09, R10, R11, R13, R15, R16, R19]
+  requires:
+    - {field: ike.encryption, op: regex, value: '^AES', label: "AES encryption"}
+    # BSI asks for >= 3000-bit finite-field DH, so MODP2048 does not pass.
+    - {field: ike.dh_group, op: regex, value: 'MODP(3072|4096|6144|8192)|ECP(256|384|521)|BRAINPOOL|ML-KEM', label: "DH >= 3000 bit or ECP / Brainpool"}
+
+- id: CNSA-2.0
+  name: "NSA CNSA 2.0 (quantum-resistant suite)"
+  violated_by: [R01, R02, R03, R04, R05, R06, R07, R08, R09, R10, R11, R13, R15, R16, R19, R20]
+  requires:
+    - {field: ike.encryption, op: regex, value: 'AES-256', label: "AES-256"}
+
+- id: CERT-IN
+  name: "CERT-In secure configuration guidance (indicative)"
+  violated_by: [R01, R02, R03, R04, R06, R08, R14, R16]
+
+- id: TEC-ITSAR
+  name: "TEC ITSAR cryptographic controls (indicative)"
+  violated_by: [R01, R02, R03, R04, R05, R06, R07, R08, R09, R15, R16]

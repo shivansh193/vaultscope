@@ -64,6 +64,24 @@ def stratified_sample(target: int, seed: int, ipv4_only: bool = False) -> list[t
     return chosen[:target]
 
 
+def cells_from_labels(labels_dir: Path) -> list[tuple]:
+    """The exact cells the tracked label JSONs describe.
+
+    Rebuilds the published corpus rather than a fresh sample, so a reviewer who
+    regenerates gets captures for the same 300 configurations the labels name.
+    """
+    import json
+
+    by_name = {c.name: c for c in generate_configs()}
+    cells = []
+    for path in sorted(labels_dir.glob("*.json")):
+        name = path.stem.split("__")[0]
+        if name not in by_name:
+            raise SystemExit(f"{path.name}: no matrix config named {name}")
+        cells.append((by_name[name], json.loads(path.read_text())["traffic_class"]))
+    return cells
+
+
 def capture_cell(
     config: TunnelConfig,
     traffic_class: str,
@@ -122,6 +140,11 @@ def main() -> int:
     parser.add_argument("--parallel", type=int, default=4)
     parser.add_argument("--seed", type=int, default=20260906)
     parser.add_argument("--out", type=Path, default=ROOT / "data")
+    parser.add_argument(
+        "--from-labels",
+        action="store_true",
+        help="regenerate the cells named by the existing label JSONs instead of sampling",
+    )
     args = parser.parse_args()
 
     if shutil.which("docker") is None:
@@ -139,9 +162,14 @@ def main() -> int:
     harness.build_image()
 
     ipv4_only = not harness.ipv6_supported()
-    if ipv4_only:
+    if ipv4_only and not args.from_labels:
         print("docker has no usable IPv6; restricting the sample to IPv4 cells")
-    cells = stratified_sample(args.target, args.seed, ipv4_only=ipv4_only)
+    if args.from_labels:
+        cells = cells_from_labels(args.out / "labels")
+        if ipv4_only and any(c.ip_version == "IPv6" for c, _ in cells):
+            print("docker has no usable IPv6; the IPv6 cells will fail", file=sys.stderr)
+    else:
+        cells = stratified_sample(args.target, args.seed, ipv4_only=ipv4_only)
     print(f"{len(cells)} cells, {args.duration}s each, {args.parallel} at a time", flush=True)
 
     slots: Queue[int] = Queue()

@@ -1,0 +1,10 @@
+vaultscope: IKEv2, no reauthentication, rekeying every 14400s
+  local:  10.90.11.2
+  remote: 10.90.11.3
+  local pre-shared key authentication:
+    id: alice
+  remote pre-shared key authentication:
+    id: bob
+  net: TRANSPORT, rekeying every 3600s
+    local:  10.90.11.2/32
+    remote: 10.90.11.3/32

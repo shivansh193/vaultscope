@@ -96,6 +96,48 @@ def all_findings(sessions: list[VPNSession]) -> list[tuple[str, Finding]]:
     return [(s.session_id, f) for s in sessions for f in s.security_assessment.findings]
 
 
+def metadata_exposure(sessions: list[VPNSession]) -> dict[str, Any]:
+    """Fleet exposure: mean score, level mix, and how many sessions leak each signal."""
+    if not sessions:
+        return {"mean_score": 0, "levels": {}, "signals": {}}
+    exposures = [s.security_assessment.metadata_exposure for s in sessions]
+    signals = Counter(
+        sig.signal for e in exposures for sig in e.signals if sig.level in ("High", "Med")
+    )
+    return {
+        "mean_score": round(sum(e.score for e in exposures) / len(exposures)),
+        "levels": dict(Counter(e.level for e in exposures)),
+        "signals": dict(signals.most_common()),
+    }
+
+
+def compliance(sessions: list[VPNSession]) -> list[dict[str, Any]]:
+    """Per baseline: how many sessions pass, fail or could not be assessed."""
+    rows: dict[str, dict[str, Any]] = {}
+    for session in sessions:
+        for c in session.security_assessment.compliance:
+            row = rows.setdefault(
+                c.baseline_id,
+                {
+                    "baseline_id": c.baseline_id,
+                    "name": c.name,
+                    "pass": 0,
+                    "fail": 0,
+                    "not_assessed": 0,
+                    "violations": Counter(),
+                },
+            )
+            row[c.status] += 1
+            row["violations"].update(c.violations)
+    for row in rows.values():
+        row["violations"] = [v for v, _ in row["violations"].most_common(5)]
+    return list(rows.values())
+
+
+def pqc_readiness(sessions: list[VPNSession]) -> dict[str, int]:
+    return dict(Counter(s.ike.pqc_status for s in sessions))
+
+
 def summarise(sessions: list[VPNSession]) -> dict[str, Any]:
     """Everything a report template needs, in one dict."""
     return {
@@ -106,6 +148,10 @@ def summarise(sessions: list[VPNSession]) -> dict[str, Any]:
         "traffic_mix": traffic_mix(sessions),
         "threat_matrix": threat_matrix(sessions),
         "classified_count": len(classified(sessions)),
+        "metadata_exposure": metadata_exposure(sessions),
+        "compliance": compliance(sessions),
+        "pqc_readiness": pqc_readiness(sessions),
+        "abstained_count": sum(1 for s in classified(sessions) if s.traffic_prediction.abstained),
         "mean_ai_confidence": (
             round(
                 sum(s.traffic_prediction.confidence for s in classified(sessions))

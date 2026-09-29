@@ -3,6 +3,8 @@
 **AI-Powered IPsec VPN Protocol Analyzer & Security Assessment Framework**
 SIH 2026 · Problem Statement SIH26160 · NTRO
 
+**Demo video:** <VIDEO-URL-PLACEHOLDER> · **Dataset:** [`data/DATASHEET.md`](data/DATASHEET.md)
+
 VaultScope is a passive-first, active-capable IPsec VPN security intelligence
 platform: it ingests traffic at the packet level, reconstructs the cryptographic
 negotiation state of every VPN session, scores each session against a
@@ -48,8 +50,11 @@ pcap ──► core.capture.read_capture ──► one read: IkeFrame[] + EspFra
               ├─► Stage 2  parse each SA with its own frames, times, ports, ESP
               ├─► Stage 4a fill any field the handshake hid (marked "inferred")
               ├─► Stage 3  flow features from the same ESP frames
-              ├─► Stage 4b traffic type (or "no ESP seen" -- never a zero-vector guess)
-              ├─► Stage 4c 18 CVE-linked rules → risk score + findings + fixes
+              ├─► Stage 4b traffic type (or "no ESP seen" -- never a zero-vector guess),
+              │            top contributing features, "uncertain" below 0.6 confidence
+              ├─► mode     tunnel/transport inferred from ESP sizes when IKE hid it (marked inferred)
+              ├─► Stage 4c 21 CVE-linked rules → risk score + findings + fixes
+              ├─► metadata exposure score + 6 compliance baselines + PQC readiness
               └─► anomalies across sessions, each citing pcap frame numbers
                         │
                         ▼
@@ -58,6 +63,28 @@ pcap ──► core.capture.read_capture ──► one read: IkeFrame[] + EspFra
 
 `core.pipeline.analyze_capture(path)` is the whole thing. Uploads and live
 runs both go through it; nothing downstream assembles part of a result itself.
+
+## What each session's assessment holds
+
+| PS term | Field | Where |
+|---|---|---|
+| Risk Score | `security_assessment.risk_score` (0–100, higher is safer) | `core/rules/engine.py` |
+| Threat Matrix | `security_assessment.threat_matrix` | same |
+| AI Confidence Score | `traffic_prediction.confidence`, `abstained`, `top_features` | `core/classifiers/` |
+| Key exchange method | `ike.dh_group`, `ike.pqc_status`, `ike.additional_key_exchanges` (RFC 9370 / ML-KEM) | `core/ike_parser/` |
+| Security Association characteristics | `ike.*` (mode, cipher, integrity, PRF, lifetime, anti-replay, DPD, NAT-T) | same |
+| Metadata exposure | `security_assessment.metadata_exposure`: 0–100 score + signals (traffic type, identity, implementation, endpoints, timing) | `core/exposure.py` |
+| Configuration compliance | `security_assessment.compliance`: pass / fail / not assessed against NIST SP 800-77r1, NIST SP 800-131A, BSI TR-02102-3, CNSA 2.0, CERT-In and TEC ITSAR (the last two indicative) | `core/rules/compliance.yaml` |
+
+Exposure is reported beside the Risk Score, not inside it: what IPsec leaks by
+design is not a misconfiguration. Compliance never fails a session on a field
+the capture hid; the requirement is listed as not assessed instead.
+
+Every stored analysis is appended to a SHA-256 hash chain (`audit_log` in the
+job store) that commits to the analysis digest and the capture's hash.
+`GET /audit/verify` detects an edited result or rewritten history. It is
+tamper-evident, not tamper-proof: publish the head hash if you need to show
+later that nothing changed.
 
 ## Prerequisites
 
@@ -206,7 +233,9 @@ Full reference with schemas at `/docs` (Swagger) and `/openapi.json`.
 | `GET /events?job_id=` | runtime anomalies, worst first, with evidence frames |
 | `GET /sessions/diff?base_job=&compare_job=` | new / gone / degraded sessions between two captures |
 | `POST /report/{job_id}` | executive PDF, technical HTML, JSON or CEF |
-| `GET /rules` | the 18-rule table |
+| `GET /rules` | the 21-rule table |
+| `POST /simulate` | what-if: re-score a stored session with cipher / DH / PFS / mode changed; nothing is stored |
+| `GET /audit` · `GET /audit/verify` | hash-chained log of every stored analysis; verify recomputes the chain and each job's digest |
 | `POST /live/start` · `POST /live/stop` · `GET /live/status` · `GET /live/interfaces` | live runs |
 | `WS /ws/live` | `{"type": "session" \| "session_removed" \| "anomaly" \| "anomaly_removed" \| "live", ...}` as they happen; `*_removed` retracts a record a later tick superseded |
 
@@ -264,7 +293,7 @@ Spec Section 13. Status as of the latest commit on `main`.
 | 5 | Technical HTML report | P3 | Done |
 | 6 | JSON / CEF export | P3 | Done |
 | 7 | Dashboard demo | P4 | Done |
-| 8 | Demo video (3-5 min) | All | Not started |
+| 8 | Demo video (3-5 min) | All | Done — <VIDEO-URL-PLACEHOLDER> |
 | 9 | Product spec | All | Done — `docs/VaultScope_Product_Spec.docx` |
 | 10 | API reference (Swagger) | P3 | Done — `/docs` on the backend |
 | 11 | Setup guide | P4 | Done — this file |

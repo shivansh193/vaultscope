@@ -1,6 +1,6 @@
 """Stage 4c rule engine + scoring model (P3-T1, P3-T2).
 
-Evaluates a :class:`~core.models.VPNSession` against the 18-rule table in
+Evaluates a :class:`~core.models.VPNSession` against the rule table in
 ``rules.yaml`` and returns a populated
 :class:`~core.models.SecurityAssessment`. The rule table is data: adding or
 retuning a rule means editing the YAML, never this file.
@@ -13,6 +13,7 @@ from typing import Any
 
 import yaml
 
+from core.exposure import assess_metadata_exposure
 from core.models import (
     SEVERITY_ORDER,
     SEVERITY_PENALTY,
@@ -21,6 +22,7 @@ from core.models import (
     ThreatMatrixEntry,
     VPNSession,
 )
+from core.rules.compliance import assess_compliance
 from core.rules.remediation import generate_remediation
 
 RULES_PATH = Path(__file__).with_name("rules.yaml")
@@ -80,6 +82,8 @@ _OPS = {
     "in": lambda actual, expected: actual in expected,
     "gt": _op_gt,
     "regex": _op_regex,
+    # `value: true` fires on a non-empty list / string, `false` on an empty one.
+    "nonempty": lambda actual, expected: bool(actual) is bool(expected),
 }
 
 
@@ -140,4 +144,6 @@ def evaluate_rules(session: VPNSession) -> SecurityAssessment:
             for f in findings
         ],
         ai_confidence=session.traffic_prediction.confidence,
+        metadata_exposure=assess_metadata_exposure(session),
+        compliance=assess_compliance(session, [f.rule_id for f in findings]),
     )

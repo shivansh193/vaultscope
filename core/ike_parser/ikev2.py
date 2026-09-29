@@ -55,12 +55,14 @@ from ._transforms import (
     TRANSFORM_TYPE_ENCR,
     TRANSFORM_TYPE_INTEG,
     TRANSFORM_TYPE_PRF,
+    TRANSFORM_TYPES_ADDKE,
     canon_auth_method,
     canon_dh_group,
     canon_encryption,
     canon_integrity,
     canon_prf,
     is_aead_encr,
+    pqc_status,
 )
 from ._vendor_ids import fingerprint_vendor
 from ._wire import IkeMessage, Proposal, decode_message
@@ -181,6 +183,10 @@ def _apply_ike_proposal(ike: dict, prop: Proposal) -> None:
         ike["prf"] = canon_prf(prf.id)
     if dh is not None and dh.id != 0:
         ike["dh_group"] = canon_dh_group(dh.id)
+    addke = [
+        canon_dh_group(t.id) for t in prop.transforms if t.type in TRANSFORM_TYPES_ADDKE and t.id
+    ]
+    ike["additional_key_exchanges"] = list(dict.fromkeys(addke))
 
 
 def _notify_types(msg: IkeMessage) -> list[int]:
@@ -366,6 +372,7 @@ def _analyse(messages: list[IkeMessage], ctx: dict) -> VPNSession:
 
     ike["msg_sizes"] = [m.length or 0 for m in messages]
     mark_unobserved(ike)
+    ike["pqc_status"] = pqc_status(ike.get("dh_group"), ike.get("additional_key_exchanges", []))
     return VPNSession(
         session_id=f"{init_spi.hex()}-{resp_spi.hex()}",
         initiator_ip=ctx.get("initiator_ip") or "",

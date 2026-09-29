@@ -81,6 +81,10 @@ def main(argv: list[str] | None = None) -> int:
         eval_y=y_val,
     )
     print(f"selected {clf.algo.upper()}  (val macro-F1 {clf.metrics['selection_macro_f1']})")
+    # Baseline for per-prediction explanations (TrafficClassifier.explain).
+    clf.metrics["feature_means"] = {
+        n: round(sum(float(r.get(n, 0.0)) for r in x_tr) / len(x_tr), 6) for n in clf.feature_names
+    }
 
     preds = [clf.predict(row)[0] for row in x_te]
     labels = sorted(set(y))

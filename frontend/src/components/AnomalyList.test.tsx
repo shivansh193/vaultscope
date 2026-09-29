@@ -83,7 +83,12 @@ describe("honest session display", () => {
 
   it("says 'no ESP' rather than a traffic guess when there was nothing to measure", () => {
     const quiet = session("s-quiet");
-    quiet.traffic_prediction = { predicted_type: "Other", confidence: 0, model_version: "no-esp-observed" };
+    quiet.traffic_prediction = {
+      ...quiet.traffic_prediction,
+      predicted_type: "Other",
+      confidence: 0,
+      model_version: "no-esp-observed",
+    };
     render(<SessionTable sessions={[quiet]} onSelect={vi.fn()} />);
     expect(screen.getByText("no ESP")).toBeInTheDocument();
     expect(screen.queryByText("Other")).toBeNull();

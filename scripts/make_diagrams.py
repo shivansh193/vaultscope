@@ -144,7 +144,7 @@ BRANCH = [
         "Predicts what rode the\ntunnel from metadata\nalone — the ML showpiece",
         ML,
     ),
-    ("4c", "Rule engine", "18 rules, each tied to a\nCVE / RFC / NIST\nreference", CRITICAL),
+    ("4c", "Rule engine", "21 rules, each tied to a\nCVE / RFC / NIST\nreference", CRITICAL),
 ]
 
 
@@ -479,7 +479,7 @@ JOURNEY = [
     ("Bucket", "One RawSession per SA,\nkeyed on the SPI pair", "Stage 1", INK_2),
     ("Decode", "AES-128-CBC, MODP1024,\nPFS unknown, vendor", "Stage 2", INK_2),
     ("Measure", "13 features from the\nESP flow of those peers", "Stage 3", INK_2),
-    ("Judge", "18 rules + traffic\nprediction + anomalies", "Stage 4a/4b/4c", CRITICAL),
+    ("Judge", "21 rules + traffic\nprediction + anomalies", "Stage 4a/4b/4c", CRITICAL),
     ("Report", "Score 60, CRITICAL,\nconfig diff to fix it", "Stage 5", SAFE),
 ]
 

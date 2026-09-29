@@ -47,6 +47,11 @@ export interface IkeParams {
   retransmit_interval_ms: number | null;
   cert: CertInfo | null;
   msg_sizes: number[];
+  pqc_status: "hybrid" | "classical" | "unknown";
+  additional_key_exchanges: string[];
+  mode_confidence: number | null;
+  gateway_fields: string[];
+  gateway_mismatches: string[];
 }
 
 export interface FlowFeatures {
@@ -71,6 +76,14 @@ export interface TrafficPrediction {
   predicted_type: TrafficType;
   confidence: number;
   model_version: string;
+  abstained: boolean;
+  top_features: FeatureContribution[];
+}
+
+export interface FeatureContribution {
+  feature: string;
+  value: number;
+  weight: number;
 }
 
 export interface Finding {
@@ -90,6 +103,26 @@ export interface ThreatMatrixEntry {
   impact: "Low" | "Med" | "High";
 }
 
+export interface ExposureSignal {
+  signal: "traffic_type" | "identity" | "implementation" | "endpoints" | "timing";
+  level: "Low" | "Med" | "High";
+  detail: string;
+}
+
+export interface MetadataExposure {
+  score: number;
+  level: "Low" | "Med" | "High";
+  signals: ExposureSignal[];
+}
+
+export interface ComplianceResult {
+  baseline_id: string;
+  name: string;
+  status: "pass" | "fail" | "not_assessed";
+  violations: string[];
+  unassessed: string[];
+}
+
 export interface SecurityAssessment {
   risk_score: number;
   overall_severity: Severity;
@@ -97,6 +130,8 @@ export interface SecurityAssessment {
   findings: Finding[];
   threat_matrix: ThreatMatrixEntry[];
   ai_confidence: number;
+  metadata_exposure: MetadataExposure;
+  compliance: ComplianceResult[];
 }
 
 export interface Reports {

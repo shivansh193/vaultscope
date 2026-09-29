@@ -43,7 +43,7 @@ def test_health_reports_model_rules_and_live_capability(client):
     body = client.get("/health").json()
     assert body["status"] == "ok"
     assert body["version"]
-    assert body["rule_count"] == len(client.get("/rules").json()) == 18
+    assert body["rule_count"] == len(client.get("/rules").json()) == 21
     assert isinstance(body["model"]["trained"], bool)
     assert body["live"]["state"] == "idle"
 
@@ -238,3 +238,54 @@ def test_model_metrics_route(client):
     if body:
         assert "f1_macro" in body
         assert isinstance(body.get("feature_importance", {}), dict)
+
+
+def test_simulate_rescores_without_storing(client, weak_pcap):
+    job = client.post("/ingest", files={"file": ("weak.pcap", weak_pcap.read_bytes())}).json()
+    session = client.get("/sessions", params={"job_id": job["job_id"]}).json()[0]
+    body = {
+        "session_id": session["session_id"],
+        "job_id": job["job_id"],
+        "encryption": "AES-256-GCM",
+        "integrity": "implicit",
+        "dh_group": "ECP384",
+    }
+    resp = client.post("/simulate", json=body).json()
+    assert resp["after"]["risk_score"] >= resp["before"]["risk_score"]
+    assert resp["resolved_rules"]
+    assert "encryption" in resp["changed"] or "dh_group" in resp["changed"]
+    stored = client.get(f"/session/{session['session_id']}", params={"job_id": job["job_id"]})
+    assert stored.json()["security_assessment"] == session["security_assessment"]
+
+
+def test_simulate_unknown_session_is_404(client):
+    assert client.post("/simulate", json={"session_id": "nope"}).status_code == 404
+
+
+def test_gateway_state_import_rescored_and_stored(client, test_pcap):
+    from pathlib import Path
+
+    with open(test_pcap, "rb") as fh:
+        job = client.post("/ingest", files={"file": ("ike.pcap", fh)}).json()
+    session = client.get("/sessions", params={"job_id": job["job_id"]}).json()[0]
+    conf = (Path(__file__).parent.parent / "fixtures" / "gateway" / "xfrm_state.txt").read_text()
+    conf = conf.replace("10.90.10.2", session["initiator_ip"]).replace(
+        "10.90.10.3", session["responder_ip"]
+    )
+    resp = client.post(
+        f"/jobs/{job['job_id']}/gateway-state", files={"file": ("xfrm.txt", conf.encode())}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["matched_sessions"] >= 1  # every SA between these peers
+    stored = client.get(
+        f"/session/{session['session_id']}", params={"job_id": job["job_id"]}
+    ).json()
+    assert "anti_replay" in stored["ike"]["gateway_fields"] or stored["ike"]["gateway_mismatches"]
+    assert client.get("/audit/verify").json()["ok"]
+
+
+def test_gateway_state_rejects_unrecognised_text(client, test_pcap):
+    with open(test_pcap, "rb") as fh:
+        job = client.post("/ingest", files={"file": ("ike.pcap", fh)}).json()
+    resp = client.post(f"/jobs/{job['job_id']}/gateway-state", files={"file": ("x.txt", b"nope")})
+    assert resp.status_code == 422

@@ -94,7 +94,10 @@ def read_capture(path: str | os.PathLike) -> CaptureRead:
     from scapy.utils import PcapReader  # noqa: PLC0415
 
     read = CaptureRead()
-    with PcapReader(str(path)) as reader:
+    # Own the file handle: PcapReader(path) opens it itself and leaks it when the
+    # header is bad, and on Windows the leaked handle makes the upload's cleanup
+    # unlink fail with WinError 32.
+    with open(path, "rb") as fh, PcapReader(fh) as reader:
         for frame, pkt in enumerate(reader, start=1):
             read.packets_seen = frame
             t = float(getattr(pkt, "time", 0.0))
