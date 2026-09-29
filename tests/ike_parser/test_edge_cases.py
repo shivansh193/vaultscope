@@ -123,3 +123,20 @@ def test_r15_fires_when_anti_replay_off(tmp_path):
     session = parse_ikev2(B.write_esp_pcap(tmp_path / "r15.pcap", n=12, static_seq=True))
     assert session.ike.anti_replay is False
     assert "R15" in evaluate_rules(session).triggered_rules
+
+
+def test_single_tunnel_keeps_its_esp_when_nat_rewrote_the_addresses(tmp_path):
+    """A lone SA whose ESP was captured under different (NATed) addresses still
+    owns that ESP, so a stuck sequence number still reads as anti-replay off."""
+    from scapy.layers.inet import IP
+    from scapy.layers.ipsec import ESP
+    from scapy.utils import rdpcap, wrpcap
+
+    from core.ike_parser import parse_ikev2
+
+    path = B.write_pcap(tmp_path / "nat.pcap", B.sa_init_for_preset("aes256gcm_ecp521_pfs"))
+    frames = list(rdpcap(path)) + [
+        IP(src="100.64.0.9", dst="192.168.20.1") / ESP(spi=0x77, seq=1) for _ in range(6)
+    ]
+    wrpcap(path, frames)
+    assert parse_ikev2(path).ike.anti_replay is False

@@ -40,6 +40,7 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# `next dev` regenerates these agent-instruction files; the repo does not keep them.
+# Instruction files `next dev` writes into the project root; not part of the repo.
 /AGENTS.md
 /*.md
+!/README.md

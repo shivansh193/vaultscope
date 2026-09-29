@@ -129,6 +129,8 @@ def _groups(source) -> list[tuple[list[IkeMessage], dict]]:
         for frames in by_sa.values():
             peers = {frames[0].src_ip, frames[0].dst_ip}
             mine = [(e.spi or 0, e.seq or 0) for e in read.esp if e.peers == peers]
+            if not mine and len(by_sa) == 1:
+                mine = esp  # one tunnel in the capture: its ESP, whatever NAT did
             groups.append(([f.msg for f in frames], _frames_ctx(frames, mine)))
         return groups
 
