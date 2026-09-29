@@ -26,11 +26,11 @@
     <td><code>{{ s.session_id }}</code></td>
     <td class="small">{{ s.initiator_ip }} &rarr; {{ s.responder_ip }}</td>
     <td>{{ s.ike.version }}{% if s.ike.aggressive_mode %} <span class="sev sev-CRITICAL">AGGR</span>{% endif %}</td>
-    <td>{{ s.ike.encryption }}{% if s.ike.confidence_source == 'classifier' %} <span class="muted small">(inferred)</span>{% endif %}</td>
-    <td>{{ s.ike.dh_group }}</td>
+    <td>{{ s.ike.encryption }}{% if 'encryption' in s.ike.inferred_fields %} <span class="muted small">(inferred)</span>{% endif %}</td>
+    <td>{{ s.ike.dh_group }}{% if 'dh_group' in s.ike.inferred_fields %} <span class="muted small">(inferred)</span>{% endif %}</td>
     <td>{{ s.ike.pfs_status }}</td>
-    <td>{{ s.traffic_prediction.predicted_type }}
-        <span class="muted small">{{ '%.0f'|format(s.traffic_prediction.confidence * 100) }}%</span></td>
+    <td>{% if s.traffic_prediction.model_version == 'no-esp-observed' %}<span class="muted">no ESP</span>{% else %}{{ s.traffic_prediction.predicted_type }}
+        <span class="muted small">{{ '%.0f'|format(s.traffic_prediction.confidence * 100) }}%</span>{% endif %}</td>
     <td>{{ s.security_assessment.risk_score }}</td>
     <td class="sev sev-{{ s.security_assessment.overall_severity }}">{{ s.security_assessment.overall_severity }}</td>
   </tr>
@@ -77,6 +77,7 @@ open it in Wireshark and go to the frame to verify.</p>
     <div class="finding">
       <div class="finding-head">
         <strong>{{ f.rule_id }} &mdash; {{ f.description }}</strong>
+        {% if f.inferred_from %}<span class="muted small">based on inferred {{ f.inferred_from|join(', ') }}</span>{% endif %}
         <span class="sev sev-{{ f.severity }}">{{ f.severity }}</span>
       </div>
       <div class="small muted">

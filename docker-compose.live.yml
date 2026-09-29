@@ -1,14 +1,20 @@
 # Live capture on the Docker host's real interfaces (Linux hosts only).
 #
-#   docker compose -f docker-compose.yml -f docker-compose.live.yml up --build
+#   VAULTSCOPE_API_TOKEN=<secret> \
+#     docker compose -f docker-compose.yml -f docker-compose.live.yml up --build
 #
 # The backend joins the host network namespace so dumpcap sees the host's
 # NICs, and gets the two capabilities packet capture needs -- nothing more.
+# On the host network the API is reachable from the LAN, so this overlay will
+# not start without an operator token: deleting jobs and interface capture
+# then need it (the Live page asks for it once).
 # Docker Desktop (macOS / Windows) runs containers in a VM, so there this only
 # sees the VM's interfaces; run the backend natively for live capture there.
 services:
   backend:
     network_mode: host
+    environment:
+      VAULTSCOPE_API_TOKEN: ${VAULTSCOPE_API_TOKEN:?set VAULTSCOPE_API_TOKEN before exposing live capture}
     cap_add:
       - NET_RAW
       - NET_ADMIN

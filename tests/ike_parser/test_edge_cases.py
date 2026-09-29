@@ -112,9 +112,10 @@ def test_anti_replay_stays_true_when_seq_advances(tmp_path):
     assert parse_ikev2(esp).ike.anti_replay is True
 
 
-def test_anti_replay_undecidable_leaves_safe_default(tmp_path):
+def test_anti_replay_undecidable_is_not_reported(tmp_path):
+    """No ESP seen: anti-replay is unobserved (None), neither on nor off."""
     path = B.write_pcap(tmp_path / "ike_only.pcap", B.sa_init_for_preset("aes256gcm_ecp521_pfs"))
-    assert parse_ikev2(path).ike.anti_replay is True  # no ESP seen -> safe default
+    assert parse_ikev2(path).ike.anti_replay is None
 
 
 def test_r15_fires_when_anti_replay_off(tmp_path):

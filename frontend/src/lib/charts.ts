@@ -53,6 +53,8 @@ export function riskHistogram(sessions: VPNSession[]): { band: string; count: nu
 export function trafficMix(sessions: VPNSession[]): { type: TrafficType; count: number }[] {
   const counts = new Map<TrafficType, number>();
   for (const session of sessions) {
+    // A session with no ESP was never classified; it is not an "Other".
+    if (session.traffic_prediction.model_version === "no-esp-observed") continue;
     const type = session.traffic_prediction.predicted_type;
     counts.set(type, (counts.get(type) ?? 0) + 1);
   }

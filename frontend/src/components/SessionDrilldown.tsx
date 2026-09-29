@@ -7,22 +7,28 @@ import type { AnomalyEvent, VPNSession } from "@/lib/types";
 /** Set by the pipeline when a session's peers carried no ESP to measure. */
 export const NO_ESP = "no-esp-observed";
 
-const inferred = (s: VPNSession, value: string) =>
-  s.ike.confidence_source === "classifier" && value !== "unknown" ? `${value} (inferred)` : value;
+const inferred = (s: VPNSession, field: string, value: string) =>
+  s.ike.inferred_fields.includes(field) ? `${value} (inferred)` : value;
 
 const IKE_FIELDS: [label: string, read: (s: VPNSession) => string][] = [
   ["Version", (s) => s.ike.version + (s.ike.aggressive_mode ? " Aggressive Mode" : "")],
   ["Mode", (s) => s.ike.mode],
-  ["Encryption", (s) => inferred(s, s.ike.encryption)],
+  ["Encryption", (s) => inferred(s, "encryption", s.ike.encryption)],
   ["Integrity", (s) => s.ike.integrity],
   ["PRF", (s) => s.ike.prf],
-  ["DH group", (s) => inferred(s, s.ike.dh_group)],
+  ["DH group", (s) => inferred(s, "dh_group", s.ike.dh_group)],
   ["PFS", (s) => s.ike.pfs_status],
   ["Authentication", (s) => s.ike.auth_method ?? "undetermined"],
-  ["SA lifetime", (s) => `${s.ike.sa_lifetime_sec} s`],
+  [
+    "SA lifetime",
+    (s) => (s.ike.sa_lifetime_sec === null ? "not observed" : `${s.ike.sa_lifetime_sec} s`),
+  ],
   ["IP version", (s) => s.ike.ip_version],
   ["NAT traversal", (s) => (s.ike.nat_traversal ? "detected" : "no")],
-  ["Anti-replay", (s) => (s.ike.anti_replay ? "on" : "off")],
+  [
+    "Anti-replay",
+    (s) => (s.ike.anti_replay === null ? "not observed" : s.ike.anti_replay ? "on" : "off"),
+  ],
   ["Vendor", (s) => s.ike.vendor],
   ["First seen", (s) => (s.timestamp ? s.timestamp.replace("T", " ").slice(0, 19) + " UTC" : "unknown")],
   [
@@ -179,6 +185,15 @@ export function SessionDrilldown({
                 <p className="mt-1 text-[length:var(--text-caption)] text-label-tertiary">
                   {[finding.standard, finding.cve].filter(Boolean).join(" · ")}
                 </p>
+                {finding.inferred_from.length > 0 && (
+                  <p
+                    data-testid="finding-inferred"
+                    className="mt-1 text-[length:var(--text-caption)] text-medium"
+                  >
+                    Based on an inferred {finding.inferred_from.join(" and ").replace("_", " ")},
+                    not a parsed value.
+                  </p>
+                )}
                 {finding.remediation && (
                   <pre
                     data-testid="config-diff"

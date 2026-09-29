@@ -99,6 +99,7 @@ def evaluate_rules(session: VPNSession) -> SecurityAssessment:
     CRITICAL rule forces ``overall_severity`` to CRITICAL regardless of score.
     """
     vendor = session.ike.vendor
+    inferred = {f"ike.{name}" for name in session.ike.inferred_fields}
     findings = [
         Finding(
             rule_id=rule["id"],
@@ -107,6 +108,9 @@ def evaluate_rules(session: VPNSession) -> SecurityAssessment:
             cve=rule.get("cve"),
             standard=rule.get("standard", ""),
             remediation=generate_remediation({"rule_id": rule["id"], "vendor": vendor}),
+            inferred_from=sorted(
+                c["field"].removeprefix("ike.") for c in rule["when"] if c["field"] in inferred
+            ),
         )
         for rule in load_rules()
         if _matches(session, rule)

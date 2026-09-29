@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Literal
 
 from core.anomalies import detect_anomalies
-from core.capture import CaptureRead, read_capture
+from core.capture import read_capture
 from core.classifiers import predict_ike_params, predict_traffic_type
 from core.flow import Flow, busiest_flow, flows_from_esp
 from core.ike_parser import parse_ikev1_sessions, parse_ikev2_sessions
@@ -79,6 +79,7 @@ def _fill_from_structure(session: VPNSession, raw: RawSession) -> None:
         return
     for f in gaps:
         setattr(ike, f, guess[f])
+    ike.inferred_fields = sorted(set(ike.inferred_fields) | set(gaps))
     ike.confidence_source = "classifier"
 
 
@@ -90,12 +91,15 @@ def _classify(flow: Flow | None) -> tuple[FlowFeatures, TrafficPrediction]:
     return features, TrafficPrediction(**predict_traffic_type(features.model_dump()))
 
 
-def _orphan_sessions(read: CaptureRead, claimed: set[frozenset[str]]) -> list[VPNSession]:
-    """One mid-session record per peer pair whose ESP has no handshake in the capture."""
+def _orphan_sessions(orphans: list) -> list[VPNSession]:
+    """One mid-session record per peer pair whose ESP no SA in the capture owns.
+
+    Stage 1 already decided ownership (including the lone-tunnel-behind-NAT
+    case), so this only groups what it left over -- never re-matches by peers.
+    """
     by_peers: dict[frozenset[str], list] = {}
-    for e in read.esp:
-        if e.peers not in claimed:
-            by_peers.setdefault(e.peers, []).append(e)
+    for e in orphans:
+        by_peers.setdefault(e.peers, []).append(e)
     sessions = []
     for esp in by_peers.values():
         raw = RawSession(session_id="", ike_version="IKEv2", esp_frames=esp)
@@ -104,6 +108,9 @@ def _orphan_sessions(read: CaptureRead, claimed: set[frozenset[str]]) -> list[VP
             session.session_id = f"esp-{first.spi or 0:08x}"
             session.initiator_ip, session.responder_ip = first.src_ip, first.dst_ip
             session.packet_refs = [e.frame for e in esp[:20]]
+            session.flow_features, session.traffic_prediction = _classify(
+                busiest_flow(flows_from_esp(esp))
+            )
             sessions.append(session)
     return sessions
 
@@ -113,22 +120,17 @@ def analyze_capture(path: str | Path, source: CaptureSource = "pcap_upload") -> 
     path = Path(path)
     read = read_capture(path)
     ingested = bucket(read)
-    flows = flows_from_esp(read.esp)
 
     sessions: list[VPNSession] = []
     for raw in ingested.sessions:
+        # The SA's own ESP, as Stage 1 assigned it -- not a second match by peers.
+        flow = busiest_flow(flows_from_esp(raw.esp_frames))
         for session in _parse(raw):
             _fill_from_structure(session, raw)
-            session.flow_features, session.traffic_prediction = _classify(
-                busiest_flow(flows, raw.peers)
-            )
+            session.flow_features, session.traffic_prediction = _classify(flow)
             sessions.append(session)
 
-    for session in _orphan_sessions(read, {raw.peers for raw in ingested.sessions}):
-        session.flow_features, session.traffic_prediction = _classify(
-            busiest_flow(flows, frozenset({session.initiator_ip, session.responder_ip}))
-        )
-        sessions.append(session)
+    sessions += _orphan_sessions(ingested.orphan_esp)
 
     for session in sessions:
         session.capture_source = source

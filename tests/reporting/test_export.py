@@ -118,3 +118,14 @@ def test_cef_emits_one_event_per_anomaly_with_evidence(sessions, anomaly):
     [line] = [x for x in lines if "|AGGRESSIVE_MODE_PROBE|" in x]
     assert CEF_HEADER.match(line).group("sev") == "8"
     assert "cs6=47,48" in line and "src=10.0.0.1" in line
+
+
+def test_cef_flags_findings_that_rest_on_inferred_values(weak_session):
+    weak_session.security_assessment.findings[0].inferred_from = ["dh_group"]
+    first = export.to_cef([weak_session]).splitlines()[0]
+    assert "flexString1Label=inferredFields flexString1=dh_group" in first
+
+
+def test_cef_does_not_invent_a_traffic_type_without_esp(clean_session):
+    clean_session.traffic_prediction.model_version = "no-esp-observed"
+    assert "cs5=" not in export.to_cef([clean_session])

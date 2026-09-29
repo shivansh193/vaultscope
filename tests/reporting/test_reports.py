@@ -180,3 +180,26 @@ def test_every_anomaly_type_has_a_plain_english_gloss():
     emitted = set(re.findall(r'"([A-Z]+(?:_[A-Z]+)+)",', inspect.getsource(core.anomalies)))
     assert len(emitted) == len(core.anomalies.DETECTORS)
     assert emitted <= set(render.ANOMALY_PLAIN_ENGLISH)
+
+
+def test_sessions_without_esp_stay_out_of_traffic_statistics(sessions):
+    quiet = sessions[1].model_copy(deep=True)
+    quiet.session_id = "quiet"
+    quiet.traffic_prediction.predicted_type = "Other"
+    quiet.traffic_prediction.confidence = 0.0
+    quiet.traffic_prediction.model_version = "no-esp-observed"
+    summary = aggregate.summarise(sessions + [quiet])
+    assert "Other" not in summary["traffic_mix"]
+    assert summary["classified_count"] == 2
+    assert summary["mean_ai_confidence"] == round((0.82 + 0.91) / 2, 3)
+    assert "no ESP" in render.render_technical_html(sessions + [quiet])
+
+
+def test_executive_handles_a_capture_with_no_esp_at_all(clean_session):
+    clean_session.traffic_prediction.model_version = "no-esp-observed"
+    assert "none was classified" in render.render_executive_html([clean_session])
+
+
+def test_findings_on_inferred_values_are_labelled(weak_session):
+    weak_session.security_assessment.findings[0].inferred_from = ["encryption"]
+    assert "based on inferred encryption" in render.render_technical_html([weak_session])

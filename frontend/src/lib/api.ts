@@ -2,7 +2,7 @@
  * Typed client for the VaultScope backend (product spec Section 11).
  *
  * Base URL comes from NEXT_PUBLIC_API_BASE so the same static bundle can be
- * served against a local uvicorn, the nginx container, or the mock server.
+ * served against a local uvicorn, the nginx container, or a hosted backend.
  */
 
 import type {
@@ -97,8 +97,39 @@ export const listJobs = () => request<JobSummary[]>("/jobs");
 export const getJob = (jobId: string) =>
   request<JobSummary>(`/jobs/${encodeURIComponent(jobId)}`);
 
+/**
+ * The operator token, when the backend sets VAULTSCOPE_API_TOKEN. Only deleting
+ * jobs and interface capture need it; kept per viewer as a convenience.
+ */
+const TOKEN_KEY = "vaultscope.token";
+
+export function operatorToken(): string {
+  try {
+    return localStorage.getItem(TOKEN_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function setOperatorToken(token: string): void {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // storage blocked: the token lasts only as long as this call
+  }
+}
+
+const operatorHeaders = (): Record<string, string> => {
+  const token = operatorToken();
+  return token ? { "X-VaultScope-Token": token } : {};
+};
+
 export const deleteJob = (jobId: string) =>
-  request<void>(`/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
+  request<void>(`/jobs/${encodeURIComponent(jobId)}`, {
+    method: "DELETE",
+    headers: operatorHeaders(),
+  });
 
 /** The capture a job analysed; evidence frame numbers index into this file. */
 export const captureUrl = (jobId: string) => `${API_BASE}/jobs/${encodeURIComponent(jobId)}/capture`;
@@ -111,7 +142,13 @@ export const liveInterfaces = () => request<CaptureInterface[]>("/live/interface
 
 export const liveStart = (
   body: { source: "replay"; job_id?: string; speed?: number } | { source: "interface"; interface: string },
-) => request<LiveStatus>("/live/start", json(body));
+) => {
+  const init = json(body);
+  return request<LiveStatus>("/live/start", {
+    ...init,
+    headers: { ...(init.headers as Record<string, string>), ...operatorHeaders() },
+  });
+};
 
 export const liveStop = () => request<LiveStatus>("/live/stop", { method: "POST" });
 

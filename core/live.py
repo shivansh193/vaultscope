@@ -109,10 +109,19 @@ class ReplaySource(LiveSource):
         self._thread.start()
 
     def _run(self, out: Path) -> None:
+        # Register the link-layer dissectors explicitly: a raw-IP capture (the
+        # attack demo is DLT 228) only decodes once scapy.layers.inet is loaded,
+        # and a freshly started backend may not have imported it yet.
+        import scapy.layers.inet  # noqa: F401, PLC0415
+        import scapy.layers.inet6  # noqa: F401, PLC0415
+        import scapy.layers.l2  # noqa: F401, PLC0415
         from scapy.utils import PcapReader, PcapWriter  # noqa: PLC0415
 
         try:
-            with PcapReader(str(self.capture)) as reader, PcapWriter(str(out), sync=True) as w:
+            with (
+                PcapReader(str(self.capture)) as reader,
+                PcapWriter(str(out), sync=True, linktype=reader.linktype) as w,
+            ):
                 previous: float | None = None
                 for pkt in reader:
                     if self._stop.is_set():

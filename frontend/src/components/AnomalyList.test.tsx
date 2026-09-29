@@ -92,10 +92,12 @@ describe("honest session display", () => {
   it("marks classifier-inferred crypto and lists evidence frames in the drilldown", () => {
     const partial = session("s-partial");
     partial.ike.confidence_source = "classifier";
+    partial.ike.inferred_fields = ["encryption"];
     partial.ike.encryption = "AES-128-CBC";
     partial.packet_refs = [3, 4];
     render(<SessionDrilldown session={partial} onClose={vi.fn()} anomalies={[probe]} />);
     expect(screen.getByText("AES-128-CBC (inferred)")).toBeInTheDocument();
+    expect(screen.getByText("ECP256")).toBeInTheDocument(); // parsed, so unmarked
     expect(screen.getByText("3, 4")).toBeInTheDocument();
     expect(screen.getByTestId("session-anomalies")).toHaveTextContent("Aggressive mode probe");
   });
@@ -133,5 +135,22 @@ describe("jobLabel", () => {
 
   it("reads SQLite's space-separated timestamps as UTC", () => {
     expect(jobLabel(job({ created_at: "2026-09-29 10:00:00" }))).not.toContain("Invalid");
+  });
+});
+
+describe("nothing unobserved is shown as observed", () => {
+  it("says 'not observed' for lifetime and anti-replay the capture never showed", () => {
+    const s = session("s-quiet");
+    s.ike.sa_lifetime_sec = null;
+    s.ike.anti_replay = null;
+    render(<SessionDrilldown session={s} onClose={vi.fn()} />);
+    expect(screen.getAllByText("not observed")).toHaveLength(2);
+  });
+
+  it("flags a finding that rests on an inferred value", () => {
+    const s = session("s-bad", { severity: "CRITICAL" });
+    s.security_assessment.findings[0].inferred_from = ["dh_group"];
+    render(<SessionDrilldown session={s} onClose={vi.fn()} />);
+    expect(screen.getByTestId("finding-inferred")).toHaveTextContent("inferred dh group");
   });
 });

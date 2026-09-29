@@ -39,7 +39,7 @@ class IkeParams(BaseModel):
     version: Literal["IKEv1", "IKEv2"] = "IKEv2"
     # "unknown" when the capture never showed it: IKEv2 carries it inside the
     # encrypted IKE_AUTH, IKEv1 in Quick Mode.
-    mode: Literal["tunnel", "transport", "unknown"] = "tunnel"
+    mode: Literal["tunnel", "transport", "unknown"] = "unknown"
     aggressive_mode: bool = False
     encryption: str = "AES-256-GCM"
     integrity: str = "implicit"
@@ -52,7 +52,9 @@ class IkeParams(BaseModel):
     # value (or None) is simply "not PSK".
     auth_method: Literal["PSK", "RSA", "DSS", "ECDSA", "EAP", "XAUTH"] | None = "RSA"
     ip_version: Literal["IPv4", "IPv6"] = "IPv4"
-    sa_lifetime_sec: int = 3600
+    # Lifetimes are local policy in IKEv2 and never cross the wire; only IKEv1
+    # phase 1 / Quick Mode carry one. None = not observed, and R11/R12 stay quiet.
+    sa_lifetime_sec: int | None = None
     vendor: str = "unknown"
     nat_traversal: bool = False
     fragmented_ike: bool = False
@@ -60,12 +62,15 @@ class IkeParams(BaseModel):
     # Not in spec Section 5's ike block, but rule R15 (anti-replay disabled,
     # RFC 4303 3.4.3) has nothing to evaluate without it. Defaults to the safe
     # value so a parser that cannot determine it never trips the rule.
-    anti_replay: bool = True
+    anti_replay: bool | None = None
 
     # --- extended signals (parser fills; "unknown"/None when undecidable) ---
     # Stage 2 how-it-was-recovered: "parser" for a deterministic decode,
     # "classifier" for the Stage 4a RF fallback on a truncated capture.
     confidence_source: Literal["parser", "classifier"] = "parser"
+    # Exactly which fields Stage 4a filled. Findings that read one of them are
+    # marked, so a guess never reaches a report looking like an observation.
+    inferred_fields: list[str] = Field(default_factory=list)
     # Dead Peer Detection negotiated (RFC 3706 VID / IKEv2 DPD notify). "unknown"
     # for a capture that never reached the point where it would be announced.
     dpd_status: Literal["enabled", "disabled", "unknown"] = "unknown"
@@ -116,6 +121,8 @@ class Finding(BaseModel):
     cve: str | None = None
     standard: str = ""
     remediation: str = ""
+    # ike.* fields this finding relied on that were inferred, not parsed.
+    inferred_from: list[str] = Field(default_factory=list)
 
 
 class ThreatMatrixEntry(BaseModel):

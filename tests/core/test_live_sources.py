@@ -71,3 +71,31 @@ def test_capture_filter_keeps_only_ipsec():
 
 def test_wait_for_file_times_out_on_nothing(tmp_path: Path):
     assert live.wait_for_file(tmp_path / "never.pcap", timeout=0.1) is False
+
+
+def test_replay_of_the_attack_capture_works_in_a_fresh_process(tmp_path):
+    """The demo path: a just-started backend has not imported scapy's IP layers,
+    and the attack capture is raw-IP (DLT 228)."""
+    import subprocess
+    import sys
+
+    repo = Path(__file__).resolve().parents[2]
+    out = tmp_path / "replayed.pcap"
+    code = (
+        "from pathlib import Path; from core.live import ReplaySource\n"
+        f"s = ReplaySource(Path({str(repo / 'data/demo/attack_capture.pcap')!r}), speed=1e6)\n"
+        f"s.start(Path({str(out)!r})); s._thread.join(30); print(s.error)"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], cwd=repo, capture_output=True, text=True, timeout=60
+    )
+    assert result.stdout.strip() == "None", result.stdout + result.stderr
+
+    from core.pipeline import analyze_capture
+
+    original = analyze_capture(repo / "data/demo/attack_capture.pcap")
+    replayed = analyze_capture(out)
+    assert replayed.stats.packets == original.stats.packets == 28
+    assert sorted(e.evidence_pkts for e in replayed.anomalies) == sorted(
+        e.evidence_pkts for e in original.anomalies
+    )

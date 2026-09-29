@@ -61,6 +61,9 @@ export function useLive() {
       } else if (message.type === "session_removed") {
         const gone = message.session_id;
         setSessions((current) => current.filter((s) => s.session_id !== gone));
+      } else if (message.type === "anomaly_removed") {
+        const gone = message.anomaly_id;
+        setAnomalies((current) => current.filter((a) => a.anomaly_id !== gone));
       } else if (message.type === "anomaly") {
         const incoming = message.anomaly;
         setAnomalies((current) => [

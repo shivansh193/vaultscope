@@ -65,8 +65,18 @@ def top_findings(sessions: list[VPNSession], limit: int = 3) -> list[dict[str, A
     return ranked[:limit]
 
 
+# Set by the pipeline on a session whose peers carried no ESP: nothing was
+# classified, so it belongs in no traffic statistic.
+NO_ESP = "no-esp-observed"
+
+
+def classified(sessions: list[VPNSession]) -> list[VPNSession]:
+    """Sessions that actually had a traffic prediction made."""
+    return [s for s in sessions if s.traffic_prediction.model_version != NO_ESP]
+
+
 def traffic_mix(sessions: list[VPNSession]) -> dict[str, int]:
-    return dict(Counter(s.traffic_prediction.predicted_type for s in sessions))
+    return dict(Counter(s.traffic_prediction.predicted_type for s in classified(sessions)))
 
 
 def threat_matrix(sessions: list[VPNSession]) -> list[dict[str, Any]]:
@@ -95,9 +105,14 @@ def summarise(sessions: list[VPNSession]) -> dict[str, Any]:
         "top_findings": top_findings(sessions),
         "traffic_mix": traffic_mix(sessions),
         "threat_matrix": threat_matrix(sessions),
+        "classified_count": len(classified(sessions)),
         "mean_ai_confidence": (
-            round(sum(s.traffic_prediction.confidence for s in sessions) / len(sessions), 3)
-            if sessions
-            else 0.0
+            round(
+                sum(s.traffic_prediction.confidence for s in classified(sessions))
+                / len(classified(sessions)),
+                3,
+            )
+            if classified(sessions)
+            else None
         ),
     }

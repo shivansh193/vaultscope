@@ -114,7 +114,8 @@ class LiveRun:
 
     async def _tick(self) -> None:
         analysis = await asyncio.to_thread(analyze_capture, self.path, "live_nic")
-        store.save_analysis(
+        await asyncio.to_thread(
+            store.save_analysis,
             self.job_id,
             analysis.sessions,
             analysis.anomalies,
@@ -145,8 +146,15 @@ class LiveRun:
             {"type": "session_removed", "job_id": self.job_id, "session_id": sid} for sid in gone
         ]
 
+        # An anomaly's id covers its evidence and counts, which grow as the run
+        # does; retract the superseded ones so the console never shows both.
+        current_events = {e.anomaly_id for e in analysis.anomalies}
         fresh = [e for e in analysis.anomalies if e.anomaly_id not in self._seen_events]
-        self._seen_events.update(e.anomaly_id for e in fresh)
+        retractions += [
+            {"type": "anomaly_removed", "job_id": self.job_id, "anomaly_id": aid}
+            for aid in sorted(self._seen_events - current_events)
+        ]
+        self._seen_events = current_events
         await self.publish(
             retractions + messages(self.job_id, changed, fresh) + [self.status_message()]
         )

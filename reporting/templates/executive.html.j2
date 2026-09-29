@@ -77,9 +77,11 @@ anomal{{ 'y was' if anomalies|length == 1 else 'ies were' }} observed in this ca
 <div class="disclosure">
   <strong>Scope and confidence.</strong> Cryptographic parameters are read directly
   from the IKE negotiation and are deterministic. Traffic types inside ESP are
-  inferred from encrypted-traffic metadata and are probabilistic &mdash; mean
-  classifier confidence for this capture is
-  {{ '%.0f'|format(summary.mean_ai_confidence * 100) }}%. Treat traffic-type
+  inferred from encrypted-traffic metadata and are probabilistic &mdash;
+  {% if summary.mean_ai_confidence is not none %}mean classifier confidence across the
+  {{ summary.classified_count }} session{{ '' if summary.classified_count == 1 else 's' }} that
+  carried ESP is {{ '%.0f'|format(summary.mean_ai_confidence * 100) }}%{% else %}no session in this
+  capture carried ESP, so none was classified{% endif %}. Treat traffic-type
   attribution as indicative, not authoritative. Full method and per-class accuracy
   appear in the technical report.
 </div>

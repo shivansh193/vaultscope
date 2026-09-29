@@ -11,10 +11,14 @@ Configuration is environment-only so the same image runs in dev, Compose and CI:
     VAULTSCOPE_CAPTURE_DIR    stored captures             (repo/data/captures)
     VAULTSCOPE_KEEP_CAPTURES  keep uploads for evidence   (1)
     VAULTSCOPE_MAX_UPLOAD_MB  upload size cap             (512)
+    VAULTSCOPE_CORS_ORIGINS   browser origins allowed     (http://localhost:3000,http://127.0.0.1:3000)
+    VAULTSCOPE_API_TOKEN      operator token for deleting jobs and interface capture (unset: open)
+    VAULTSCOPE_INTERFACE_CAPTURE  0 disables live capture on real NICs          (1)
 """
 
 import asyncio
 import contextlib
+import hmac
 import json
 import os
 import uuid
@@ -23,8 +27,10 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import (
+    Depends,
     FastAPI,
     File,
+    Header,
     HTTPException,
     Query,
     UploadFile,
@@ -99,16 +105,38 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# The console is served same-origin by nginx in Compose; the dev server on
-# :3000 is a different origin. No cookies or credentials are ever sent, so an
-# open CORS policy exposes nothing a same-origin caller could not already read.
+# The console is served same-origin by nginx in Compose, so production needs no
+# CORS at all. Only the listed origins (the dev server by default, or a hosted
+# console) may call the API from a browser: an open policy would let any page
+# the operator visits delete jobs or start a capture on a local backend.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        o.strip()
+        for o in os.environ.get(
+            "VAULTSCOPE_CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
+        ).split(",")
+        if o.strip()
+    ],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def require_operator(x_vaultscope_token: str | None = Header(None)) -> None:
+    """Guard for destructive and privileged routes when VAULTSCOPE_API_TOKEN is set.
+
+    Analysis stays open -- a judge uploading a capture needs no credentials --
+    but deleting evidence or sniffing a real interface needs the operator.
+    """
+    expected = os.environ.get("VAULTSCOPE_API_TOKEN")
+    if expected and not hmac.compare_digest(x_vaultscope_token or "", expected):
+        raise HTTPException(401, "operator token required (X-VaultScope-Token)")
+
+
+def _interface_capture_enabled() -> bool:
+    return os.environ.get("VAULTSCOPE_INTERFACE_CAPTURE", "1") not in ("0", "false", "no")
 
 
 # --- response models -----------------------------------------------------------
@@ -208,7 +236,7 @@ def health() -> HealthResponse:
             trained=info["trained"], model_version=info["model_version"], algo=info.get("algo")
         ),
         live=LiveHealth(
-            interface_capture=sources.dumpcap_path() is not None,
+            interface_capture=_interface_capture_enabled() and sources.dumpcap_path() is not None,
             replay=DEMO_CAPTURE.is_file(),
             state=_run.status.state if _run else "idle",
         ),
@@ -287,7 +315,8 @@ async def ingest(file: UploadFile = File(...)) -> IngestResponse:
     name = Path(file.filename or target.name).name
     for session in analysis.sessions:
         session.capture_file = name
-    store.save_analysis(
+    await asyncio.to_thread(
+        store.save_analysis,
         job_id,
         analysis.sessions,
         analysis.anomalies,
@@ -325,7 +354,9 @@ def get_job(job_id: str) -> JobSummary:
     return _job_or_404(job_id)
 
 
-@app.delete("/jobs/{job_id}", status_code=204, tags=["jobs"])
+@app.delete(
+    "/jobs/{job_id}", status_code=204, tags=["jobs"], dependencies=[Depends(require_operator)]
+)
 def delete_job(job_id: str) -> None:
     if _run is not None and _run.job_id == job_id and _run.status.state == "running":
         raise HTTPException(409, "stop the live run before deleting its job")
@@ -443,6 +474,7 @@ def download_report(filename: str) -> FileResponse:
 
 _subscribers: set[WebSocket] = set()
 _run: live.LiveRun | None = None
+_start_lock = asyncio.Lock()
 
 
 async def _publish(messages: list[dict]) -> None:
@@ -471,13 +503,30 @@ async def live_interfaces() -> list[Interface]:
 
 
 @app.post("/live/start", response_model=live.LiveStatus, tags=["live"])
-async def live_start(request: LiveStartRequest) -> live.LiveStatus:
+async def live_start(
+    request: LiveStartRequest, x_vaultscope_token: str | None = Header(None)
+) -> live.LiveStatus:
     """Start a live run: sessions stream over ``/ws/live`` and land in a new job."""
     global _run
-    if _run is not None and _run.status.state == "running":
-        raise HTTPException(409, f"a live run is already active ({_run.job_id})")
+    async with _start_lock:  # the check and the assignment below must not interleave
+        if _run is not None and _run.status.state == "running":
+            raise HTTPException(409, f"a live run is already active ({_run.job_id})")
+        run = _build_run(request, x_vaultscope_token)
+        try:
+            await asyncio.to_thread(run.source.start, run.path)
+        except (RuntimeError, OSError) as exc:
+            raise HTTPException(503, f"could not start capture: {exc}") from exc
+        run.start_loop()
+        _run = run
+    await _publish([run.status_message()])
+    return run.status
 
+
+def _build_run(request: LiveStartRequest, token: str | None) -> live.LiveRun:
     if request.source == "interface":
+        if not _interface_capture_enabled():
+            raise HTTPException(403, "interface capture is disabled on this deployment")
+        require_operator(token)
         if not request.interface:
             raise HTTPException(422, "source=interface needs an interface name")
         source: sources.LiveSource = sources.InterfaceSource(request.interface)
@@ -486,16 +535,7 @@ async def live_start(request: LiveStartRequest) -> live.LiveStatus:
         if capture is None or not capture.is_file():
             raise HTTPException(404, "no capture available to replay")
         source = sources.ReplaySource(capture, speed=request.speed)
-
-    run = live.LiveRun(source, CAPTURE_DIR, _publish)
-    try:
-        await asyncio.to_thread(run.source.start, run.path)
-    except (RuntimeError, OSError) as exc:
-        raise HTTPException(503, f"could not start capture: {exc}") from exc
-    run.start_loop()
-    _run = run
-    await _publish([run.status_message()])
-    return run.status
+    return live.LiveRun(source, CAPTURE_DIR, _publish)
 
 
 @app.post("/live/stop", response_model=live.LiveStatus, tags=["live"])

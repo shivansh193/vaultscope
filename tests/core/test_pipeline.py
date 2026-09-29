@@ -202,3 +202,47 @@ def test_stage_4a_ignores_a_low_confidence_guess(tmp_path, monkeypatch):
     pipeline._fill_from_structure(session, _raw_with_sa_init(tmp_path))
     assert session.ike.encryption == "unknown"
     assert session.ike.confidence_source == "parser"
+
+
+def test_lone_tunnel_behind_nat_keeps_its_esp_end_to_end(tmp_path):
+    """ESP captured under NATed addresses belongs to the one SA in the capture:
+    no phantom mid-session record, and the real session is classified."""
+    frames = _stamp(_sa(tmp_path, "aes256gcm_ecp521_pfs"))
+    frames += _esp("100.64.0.9", "192.168.20.1", n=29, spi=0x77)
+    analysis = pipeline.analyze_capture(_write(tmp_path, frames))
+
+    [session] = analysis.sessions
+    assert session.flow_features.pkt_total == 29
+    assert session.traffic_prediction.model_version != pipeline.NO_ESP_MODEL_VERSION
+    assert (analysis.stats.sessions, analysis.stats.orphan_esp_packets) == (1, 0)
+
+
+def test_unobserved_mode_lifetime_and_anti_replay_are_not_reported(tmp_path):
+    """Neither the handshake-only nor the ESP-only session may show defaults."""
+    frames = _stamp(_sa(tmp_path, "aes256gcm_ecp521_pfs"))
+    frames += _esp("10.9.0.1", "10.9.0.2")  # orphan ESP -> mid-session record
+    by_id = {
+        s.session_id.startswith("esp-"): s
+        for s in pipeline.analyze_capture(_write(tmp_path, frames)).sessions
+    }
+    handshake, esp_only = by_id[False], by_id[True]
+    assert handshake.ike.mode == esp_only.ike.mode == "unknown"
+    assert handshake.ike.sa_lifetime_sec is None and esp_only.ike.sa_lifetime_sec is None
+    assert handshake.ike.anti_replay is None  # no ESP of its own
+    assert esp_only.ike.anti_replay is True  # 40 advancing sequence numbers
+
+
+def test_findings_on_inferred_fields_say_so(tmp_path, monkeypatch):
+    """A Stage 4a guess that trips a rule is carried into the finding."""
+    from core.rules.engine import evaluate_rules
+
+    monkeypatch.setattr(
+        pipeline,
+        "predict_ike_params",
+        lambda msgs: {"encryption": "3DES-CBC", "dh_group": "MODP1024", "confidence": 0.9},
+    )
+    session = _gap_session()
+    pipeline._fill_from_structure(session, _raw_with_sa_init(tmp_path))
+    assert session.ike.inferred_fields == ["encryption"]
+    findings = {f.rule_id: f for f in evaluate_rules(session).findings}
+    assert findings["R02"].inferred_from == ["encryption"]  # 3DES, guessed

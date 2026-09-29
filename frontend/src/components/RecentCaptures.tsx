@@ -2,7 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { deleteJob } from "@/lib/api";
+import { OperatorToken } from "@/components/OperatorToken";
+import { ApiError, deleteJob } from "@/lib/api";
 import { SEVERITY_HEX } from "@/lib/charts";
 import { jobLabel, useJobs } from "@/lib/jobs";
 import { SEVERITY_ORDER } from "@/lib/types";
@@ -12,7 +13,10 @@ export function RecentCaptures() {
   const router = useRouter();
   const { jobs, select, reload } = useJobs();
   const [deleting, setDeleting] = useState<string>();
+  // Deleting removes the stored capture for good, so it takes a second click.
+  const [confirming, setConfirming] = useState<string>();
   const [error, setError] = useState<string>();
+  const [needsToken, setNeedsToken] = useState(false);
 
   if (jobs.length === 0) return null;
 
@@ -21,11 +25,14 @@ export function RecentCaptures() {
     setError(undefined);
     try {
       await deleteJob(jobId);
+      setNeedsToken(false);
       await reload();
     } catch (e) {
+      setNeedsToken(e instanceof ApiError && e.status === 401);
       setError((e as Error).message);
     } finally {
       setDeleting(undefined);
+      setConfirming(undefined);
     }
   }
 
@@ -39,6 +46,7 @@ export function RecentCaptures() {
           {error}
         </p>
       )}
+      {needsToken && <OperatorToken onSaved={() => setNeedsToken(false)} />}
       <ul className="mt-3 flex flex-col divide-y divide-separator rounded-xl border border-separator bg-surface">
         {jobs.map((job) => (
           <li
@@ -78,15 +86,36 @@ export function RecentCaptures() {
                 ) : null,
               )}
             </span>
-            <button
-              type="button"
-              aria-label={`Delete ${job.capture_file ?? job.job_id}`}
-              disabled={deleting === job.job_id}
-              onClick={() => void remove(job.job_id)}
-              className="rounded-md px-2 py-1 text-[length:var(--text-caption)] text-label-tertiary hover:bg-surface-raised hover:text-critical disabled:opacity-40"
-            >
-              Delete
-            </button>
+            {confirming === job.job_id ? (
+              <span className="flex items-center gap-1 text-[length:var(--text-caption)]">
+                <span className="text-label-secondary">Delete capture and findings?</span>
+                <button
+                  type="button"
+                  data-testid="confirm-delete"
+                  disabled={deleting === job.job_id}
+                  onClick={() => void remove(job.job_id)}
+                  className="rounded-md px-2 py-1 text-critical hover:bg-surface-raised disabled:opacity-40"
+                >
+                  Delete
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirming(undefined)}
+                  className="rounded-md px-2 py-1 text-label-secondary hover:bg-surface-raised"
+                >
+                  Keep
+                </button>
+              </span>
+            ) : (
+              <button
+                type="button"
+                aria-label={`Delete ${job.capture_file ?? job.job_id}`}
+                onClick={() => setConfirming(job.job_id)}
+                className="rounded-md px-2 py-1 text-[length:var(--text-caption)] text-label-tertiary hover:bg-surface-raised hover:text-critical"
+              >
+                Delete
+              </button>
+            )}
           </li>
         ))}
       </ul>

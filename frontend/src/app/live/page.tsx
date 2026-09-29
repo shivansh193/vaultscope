@@ -3,10 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { AnomalyList } from "@/components/AnomalyList";
+import { OperatorToken } from "@/components/OperatorToken";
 import { SessionDrilldown } from "@/components/SessionDrilldown";
 import { SessionTable } from "@/components/SessionTable";
 import { Toolbar } from "@/components/Toolbar";
-import { health, liveInterfaces, liveStart, liveStop } from "@/lib/api";
+import { ApiError, health, liveInterfaces, liveStart, liveStop } from "@/lib/api";
 import { jobLabel, useJobs } from "@/lib/jobs";
 import type { CaptureInterface, VPNSession } from "@/lib/types";
 import { useLive } from "@/lib/useLive";
@@ -35,6 +36,7 @@ export default function LivePage() {
   const [speed, setSpeed] = useState(50);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [needsToken, setNeedsToken] = useState(false);
 
   useEffect(() => {
     health()
@@ -62,10 +64,13 @@ export default function LivePage() {
     setError(undefined);
     try {
       const [kind, value] = [source.slice(0, source.indexOf(":")), source.slice(source.indexOf(":") + 1)];
+      // Clear before starting: the first sessions can arrive before the response.
+      clear();
       if (kind === "nic") await liveStart({ source: "interface", interface: value });
       else await liveStart({ source: "replay", speed, ...(value === "demo" ? {} : { job_id: value }) });
-      clear();
+      setNeedsToken(false);
     } catch (e) {
+      setNeedsToken(e instanceof ApiError && e.status === 401);
       setError((e as Error).message);
     } finally {
       setBusy(false);
@@ -196,6 +201,14 @@ export default function LivePage() {
               <p role="alert" className="mt-2 text-[length:var(--text-footnote)] text-critical">
                 {error ?? status.error}
               </p>
+            )}
+            {needsToken && (
+              <OperatorToken
+                onSaved={() => {
+                  setNeedsToken(false);
+                  setError(undefined);
+                }}
+              />
             )}
             {status.job_id && status.state !== "running" && status.state !== "idle" && (
               <button

@@ -119,3 +119,38 @@ def test_legacy_database_is_migrated_on_start(tmp_path, monkeypatch):
     store.init_db()
     [job] = store.list_jobs()
     assert job.job_id == "old" and job.source == "pcap_upload" and job.session_count == 0
+
+
+# --- exposure: CORS and the operator token ----------------------------------------
+
+
+def test_only_configured_origins_may_call_from_a_browser(client):
+    allowed = client.get("/health", headers={"Origin": "http://localhost:3000"})
+    assert allowed.headers.get("access-control-allow-origin") == "http://localhost:3000"
+    stranger = client.get("/health", headers={"Origin": "https://evil.example"})
+    assert "access-control-allow-origin" not in stranger.headers
+
+
+def test_deleting_evidence_needs_the_operator_token_when_one_is_set(client, ingested, monkeypatch):
+    monkeypatch.setenv("VAULTSCOPE_API_TOKEN", "s3cret")
+    assert client.delete(f"/jobs/{ingested}").status_code == 401
+    assert (
+        client.delete(f"/jobs/{ingested}", headers={"X-VaultScope-Token": "nope"}).status_code
+        == 401
+    )
+    ok = client.delete(f"/jobs/{ingested}", headers={"X-VaultScope-Token": "s3cret"})
+    assert ok.status_code == 204
+
+
+def test_uploads_stay_open_when_a_token_is_set(client, test_pcap, monkeypatch):
+    monkeypatch.setenv("VAULTSCOPE_API_TOKEN", "s3cret")
+    assert _upload(client, test_pcap).status_code == 200
+
+
+def test_interface_capture_needs_the_token_and_can_be_disabled(client, monkeypatch):
+    body = {"source": "interface", "interface": "no-such-nic0"}
+    monkeypatch.setenv("VAULTSCOPE_API_TOKEN", "s3cret")
+    assert client.post("/live/start", json=body).status_code == 401
+    monkeypatch.setenv("VAULTSCOPE_INTERFACE_CAPTURE", "0")
+    assert client.post("/live/start", json=body).status_code == 403
+    assert client.get("/health").json()["live"]["interface_capture"] is False

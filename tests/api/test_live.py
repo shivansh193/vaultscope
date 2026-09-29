@@ -69,13 +69,12 @@ def test_replayed_evidence_matches_the_original_capture(client, ingested, fast_t
     )
 
 
-def test_second_run_while_one_is_active_is_409(client, ingested, monkeypatch):
-    from api import live
-
-    monkeypatch.setattr(live, "TICK_SEC", 0.1)
-    _replay(client, ingested)
+def test_second_run_while_one_is_active_is_409(client, fast_ticks):
+    # The bundled demo at 1x takes minutes, so the first run is surely still going.
+    assert client.post("/live/start", json={"source": "replay", "speed": 1}).status_code == 200
     try:
-        assert _replay(client, ingested).status_code in (200, 409)
+        second = client.post("/live/start", json={"source": "replay", "speed": 1})
+        assert second.status_code == 409
     finally:
         client.post("/live/stop")
 
@@ -149,3 +148,55 @@ async def test_a_session_whose_id_changes_is_retracted(tmp_path, monkeypatch):
     removed = [m["session_id"] for m in published if m["type"] == "session_removed"]
     added = [m["session"]["session_id"] for m in published if m["type"] == "session"]
     assert added == ["aa-0000", "aa-bbbb"] and removed == ["aa-0000"]
+
+
+async def test_superseded_anomalies_are_retracted(tmp_path, monkeypatch):
+    """Evidence grows during a run, so an anomaly's id changes; the old one must go."""
+    from api import live
+    from core.live import LiveSource
+    from core.models import AnomalyEvent, VPNSession
+    from core.pipeline import Analysis
+
+    class Idle(LiveSource):
+        label = "test"
+        running = True
+
+        def start(self, out):
+            pass
+
+        def stop(self):
+            pass
+
+    def event(aid):
+        return AnomalyEvent(
+            anomaly_id=aid,
+            session_id="s",
+            timestamp="",
+            anomaly_type="REKEY_STORM",
+            severity="MEDIUM",
+            description="",
+        )
+
+    ticks = iter(
+        [
+            Analysis(sessions=[VPNSession(session_id="s")], anomalies=[event("v1")]),
+            Analysis(sessions=[VPNSession(session_id="s")], anomalies=[event("v2")]),
+        ]
+    )
+    published: list[dict] = []
+
+    async def publish(batch):
+        published.extend(batch)
+
+    monkeypatch.setattr(live, "analyze_capture", lambda *a, **k: next(ticks))
+    monkeypatch.setenv("VAULTSCOPE_DB", str(tmp_path / "t.sqlite"))
+    live.store.init_db()
+    run = live.LiveRun(Idle(), tmp_path, publish)
+    await run._tick()
+    await run._tick()
+
+    assert [m["anomaly_id"] for m in published if m["type"] == "anomaly_removed"] == ["v1"]
+    assert [m["anomaly"]["anomaly_id"] for m in published if m["type"] == "anomaly"] == [
+        "v1",
+        "v2",
+    ]

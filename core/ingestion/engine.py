@@ -139,11 +139,12 @@ def bucket(read: CaptureRead) -> IngestResult:
     # ESP SPIs are negotiated inside the encrypted exchange, so the peer pair
     # is the only link between a data-plane packet and the SA that set it up.
     # Several SAs between one pair share its ESP: each rekey is the same tunnel.
+    by_pair: dict[frozenset[str], list[RawSession]] = {}
+    for s in sessions:
+        by_pair.setdefault(s.peers, []).append(s)
     orphans: list[EspFrame] = []
     for e in read.esp:
-        owners = [s for s in sessions if s.peers == e.peers]
-        if not owners and len(sessions) == 1:
-            owners = sessions  # one tunnel in the capture: its ESP, whatever NAT did
+        owners = by_pair.get(e.peers) or nat_owner(e.peers, by_pair)
         for s in owners:
             s.esp_frames.append(e)
         if not owners:
@@ -155,6 +156,17 @@ def bucket(read: CaptureRead) -> IngestResult:
         packets_seen=read.packets_seen,
         duration_sec=read.duration_sec,
     )
+
+
+def nat_owner(peers: frozenset[str], by_pair: dict[frozenset[str], list]) -> list:
+    """The SAs a NATed ESP packet belongs to, or ``[]``.
+
+    NAT rewrites one side of the pair, so ESP that matches no SA exactly still
+    shares an endpoint with its own. Attribute it only when exactly one peer
+    pair shares an endpoint -- otherwise it is ambiguous and stays an orphan.
+    """
+    candidates = [pair for pair in by_pair if pair & peers]
+    return by_pair[candidates[0]] if len(candidates) == 1 else []
 
 
 def ingest(source: str | os.PathLike | CaptureRead) -> IngestResult:

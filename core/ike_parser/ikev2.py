@@ -125,12 +125,18 @@ def _groups(source) -> list[tuple[list[IkeMessage], dict]]:
         esp = [(e.spi or 0, e.seq or 0) for e in read.esp]
         if not by_sa:
             return [([], _frames_ctx([], esp))] if esp else [([], {})]
+        from core.ingestion.engine import nat_owner  # noqa: PLC0415
+
+        pairs: dict[frozenset[str], list] = {}
+        for key, frames in by_sa.items():
+            pairs.setdefault(frozenset({frames[0].src_ip, frames[0].dst_ip}), []).append(key)
+        owned: dict[bytes, list[tuple[int, int]]] = {key: [] for key in by_sa}
+        for e in read.esp:  # same attribution as Stage 1, NAT included
+            for key in pairs.get(e.peers) or nat_owner(e.peers, pairs):
+                owned[key].append((e.spi or 0, e.seq or 0))
         groups = []
-        for frames in by_sa.values():
-            peers = {frames[0].src_ip, frames[0].dst_ip}
-            mine = [(e.spi or 0, e.seq or 0) for e in read.esp if e.peers == peers]
-            if not mine and len(by_sa) == 1:
-                mine = esp  # one tunnel in the capture: its ESP, whatever NAT did
+        for key, frames in by_sa.items():
+            mine = owned[key]
             groups.append(([f.msg for f in frames], _frames_ctx(frames, mine)))
         return groups
 
@@ -224,8 +230,8 @@ def apply_edge_cases(ike: dict, messages: list[IkeMessage], ctx: dict) -> None:
         ike["fragmented_ike"] = True
 
     replay = anti_replay_from_esp(ctx.get("esp_records") or [])
-    if replay is False:
-        ike["anti_replay"] = False
+    if replay is not None:
+        ike["anti_replay"] = replay
 
     from ._signals import cert_from_messages, dpd_from_messages, retransmit_interval_ms
 
@@ -434,8 +440,9 @@ def _esp_only(ctx: dict) -> VPNSession:
     )
     if ctx.get("ip_version"):
         ike["ip_version"] = ctx["ip_version"]
-    if anti_replay_from_esp(ctx.get("esp_records") or []) is False:
-        ike["anti_replay"] = False
+    replay = anti_replay_from_esp(ctx.get("esp_records") or [])
+    if replay is not None:
+        ike["anti_replay"] = replay
     return VPNSession(session_id="esp-only", ike=IkeParams(**ike))
 
 

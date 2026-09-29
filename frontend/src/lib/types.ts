@@ -31,13 +31,17 @@ export interface IkeParams {
   pfs_status: "enabled" | "disabled" | "unknown";
   auth_method: "PSK" | "RSA" | "DSS" | "ECDSA" | "EAP" | "XAUTH" | null;
   ip_version: "IPv4" | "IPv6";
-  sa_lifetime_sec: number;
+  /** null: not observed (IKEv2 never sends it). */
+  sa_lifetime_sec: number | null;
   vendor: string;
   nat_traversal: boolean;
   fragmented_ike: boolean;
   capture_complete: boolean;
-  anti_replay: boolean;
+  /** null: no ESP seen, so undecided. */
+  anti_replay: boolean | null;
   confidence_source: "parser" | "classifier";
+  /** Fields Stage 4a filled from message structure rather than parsing. */
+  inferred_fields: string[];
   dpd_status: "enabled" | "disabled" | "unknown";
   dpd_interval_sec: number | null;
   retransmit_interval_ms: number | null;
@@ -76,6 +80,8 @@ export interface Finding {
   cve: string | null;
   standard: string;
   remediation: string;
+  /** ike.* fields this finding relied on that were inferred, not parsed. */
+  inferred_from: string[];
 }
 
 export interface ThreatMatrixEntry {
@@ -208,6 +214,7 @@ export type LiveMessage =
   | { type: "session"; job_id: string; session: VPNSession }
   | { type: "session_removed"; job_id: string; session_id: string }
   | { type: "anomaly"; job_id: string; anomaly: AnomalyEvent }
+  | { type: "anomaly_removed"; job_id: string; anomaly_id: string }
   | { type: "live"; status: LiveStatus };
 
 /** A session both captures hold, whose assessment got worse. */

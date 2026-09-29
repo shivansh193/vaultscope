@@ -78,7 +78,11 @@ def to_cef(sessions: list[VPNSession], anomalies: Sequence[AnomalyEvent] = ()) -
             "cn1Label": "riskScore",
             "cn1": assessment.risk_score,
             "cs5Label": "trafficType",
-            "cs5": session.traffic_prediction.predicted_type,
+            "cs5": (
+                ""
+                if session.traffic_prediction.model_version == "no-esp-observed"
+                else session.traffic_prediction.predicted_type
+            ),
             "rt": session.timestamp,
         }
 
@@ -90,6 +94,9 @@ def to_cef(sessions: list[VPNSession], anomalies: Sequence[AnomalyEvent] = ()) -
             ext = dict(base)
             ext["cs6Label"] = "standard"
             ext["cs6"] = finding.standard
+            if finding.inferred_from:
+                ext["flexString1Label"] = "inferredFields"
+                ext["flexString1"] = ",".join(finding.inferred_from)
             if finding.cve:
                 ext["cve"] = finding.cve
             lines.append(
