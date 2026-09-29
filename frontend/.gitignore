@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# `next dev` regenerates these agent-instruction files; the repo does not keep them.
+/AGENTS.md
+/*.md

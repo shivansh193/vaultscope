@@ -1,9 +1,10 @@
 # VaultScope — recorded demo script
 
-**Total ≈ 3:20.** About 1:15 on the diagrams, 2:05 in the product.
+**Total ≈ 4:15.** About 1:20 on the diagrams, 2:55 in the product.
 
 **Before recording:** `docker compose up -d`, browser at <http://localhost:3000>,
-`data/demo/demo_capture.pcap` ready to drag. Have the four diagrams open in
+`data/demo/demo_capture.pcap` and `data/demo/attack_capture.pcap` ready to drag,
+Wireshark open. Have the four diagrams open in
 Preview so you can arrow between them.
 
 Spoken lines are quoted. Actions in brackets. Timings are cumulative.
@@ -68,7 +69,7 @@ Spoken lines are quoted. Actions in brackets. Timings are cumulative.
 
 ---
 
-# Part 2 — The product (1:20 – 3:40)
+# Part 2 — The product (1:20 – 4:15)
 
 ## 1:20 — 1:35 · Upload
 
@@ -95,21 +96,46 @@ Spoken lines are quoted. Actions in brackets. Timings are cumulative.
 
 [Click the top CRITICAL row — DES-CBC / MODP1024.]
 
-> "Full decode. DES with MODP1024 — that's Logjam, CVE-2015-4000, and it's
-> flagged with the reference.
+> "Full decode. DES with MODP1024 — that's the Logjam-class weakness, flagged
+> with its RFC 8247 reference.
 >
 > But here's what makes it useful: **the exact configuration change to fix it,
 > for that vendor.** We fingerprint the implementation from the IKE Vendor ID
 > payload — Cisco ASA, strongSwan, Juniper — so this isn't generic advice.
 > These are the lines you paste into that box.
 >
-> Below it, the flow measurements the traffic prediction was made from. And
-> every anomaly we raise carries the exact packet frame numbers, so anyone can
-> open the pcap in Wireshark and verify us."
+> Below it, the flow measurements the traffic prediction was made from."
 
 ---
 
-## 2:45 — 3:05 · Peer graph
+## 2:45 — 3:15 · Attack, with evidence
+
+[Click **Capture**, drag `attack_capture.pcap`. The sessions page opens with the
+attack-indicator panel expanded.]
+
+> "Weak configuration is one problem. An attacker is another. Across this
+> capture we see Aggressive Mode probing for a password hash, one scanner
+> walking through four cipher suites, a branch office being downgraded to 3DES —
+> and each one names its **frame numbers**."
+
+[Click **Download the capture**, open it in Wireshark, Go to Packet 1.]
+
+> "Frame one, frame two: there's the Aggressive Mode exchange. You don't have
+> to trust us — check us."
+
+---
+
+## 3:15 — 3:35 · Live
+
+[Click **Live**. Source: *Replay · bundled demo capture*, speed 50×, **Start capture**.]
+
+> "And it doesn't need a file. Point it at an interface — or, here, replay a
+> capture — and tunnels appear as the backend decodes them. The run is saved
+> as its own job with its own capture, so the evidence stays checkable."
+
+---
+
+## 3:35 — 3:50 · Peer graph
 
 [Click **Peers**. Drag a node.]
 
@@ -120,23 +146,22 @@ Spoken lines are quoted. Actions in brackets. Timings are cumulative.
 
 ---
 
-## 3:05 — 3:20 · Overview
+## 3:50 — 4:00 · Overview
 
 [Click **Overview**.]
 
-> "Risk distribution across the estate, the traffic mix inside the tunnels, and
-> a threat matrix by likelihood and impact — every chart driven by the same
-> session records."
+> "Posture, attack indicators, risk distribution, the traffic mix, and a threat
+> matrix — every number from the same session records."
 
 ---
 
-## 3:20 — 3:40 · Export and close
+## 4:00 — 4:15 · Export and close
 
 [Click **Export**, trigger one download.]
 
 > "Four artifacts, one click each: a one-page executive PDF for management, a
-> full technical report with the confusion matrix embedded, JSON, and CEF that
-> drops straight into a SIEM.
+> full technical report with the anomalies and the confusion matrix, JSON, and
+> CEF that drops straight into a SIEM.
 >
 > Passive capture, to full IKE decode, to machine learning on encrypted traffic,
 > to CVE-linked scoring, to a vendor-specific fix — and the labeled dataset
@@ -152,6 +177,10 @@ Spoken lines are quoted. Actions in brackets. Timings are cumulative.
   the config diff sit on screen for a couple of seconds.
 - **Drag a node** in the peer graph. Motion sells that it's a live force
   simulation, not a picture.
-- Don't click **Live** — it streams on ingest and will look empty on its own.
-- If you need to reach 3:00 flat, cut the Overview beat and shorten the
-  pipeline walk to Stage 0, 2 and 4b.
+- **Upload the demo capture before the attack capture**, so the Peers beat
+  shows the six-tunnel capture: pick it in the capture menu in the toolbar.
+- Live replay at 50× finishes in about ten seconds; start it and talk.
+- If you need to reach 3:30, cut the Overview beat and shorten the pipeline
+  walk to Stage 0, 2 and 4b.
+- `data/demo/attack_capture.pcap` is synthetic — say so if asked; the README
+  and SUBMISSION.md disclose it.

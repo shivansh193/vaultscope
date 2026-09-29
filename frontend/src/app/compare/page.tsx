@@ -6,16 +6,19 @@ import { SessionTable } from "@/components/SessionTable";
 import { Toolbar } from "@/components/Toolbar";
 import { diffJobs } from "@/lib/api";
 import { SEVERITY_HEX } from "@/lib/charts";
-import { jobHistory } from "@/lib/job";
+import { jobLabel, useJobs } from "@/lib/jobs";
 import type { SessionDiff, VPNSession } from "@/lib/types";
 
 const control =
   "rounded-md border border-separator bg-surface-raised px-2.5 py-1.5 text-[length:var(--text-footnote)] text-label";
 
 export default function ComparePage() {
-  const history = typeof window === "undefined" ? [] : jobHistory();
-  const [base, setBase] = useState(() => history[1]?.job_id ?? "");
-  const [compare, setCompare] = useState(() => history[0]?.job_id ?? "");
+  const { jobs: history } = useJobs();
+  // Default to "the capture before the latest" vs "the latest" until the user picks.
+  const [baseChoice, setBase] = useState<string>();
+  const [compareChoice, setCompare] = useState<string>();
+  const base = baseChoice ?? history[1]?.job_id ?? "";
+  const compare = compareChoice ?? history[0]?.job_id ?? "";
   const [result, setResult] = useState<SessionDiff>();
   const [open, setOpen] = useState<VPNSession | null>(null);
   const [error, setError] = useState<string>();
@@ -36,15 +39,15 @@ export default function ComparePage() {
 
   const options = history.map((job) => (
     <option key={job.job_id} value={job.job_id}>
-      {job.capture_file} · {job.session_count} sessions
+      {jobLabel(job)} · {job.session_count} sessions
     </option>
   ));
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="h-page flex flex-col">
       <Toolbar title="Compare" />
       <div className="flex min-h-0 w-full flex-1 overflow-hidden">
-        <div className="w-0 flex-1 overflow-y-auto px-7 py-6">
+        <div className="w-0 flex-1 overflow-y-auto px-4 py-6 md:px-7">
         {history.length < 2 ? (
           <p className="py-24 text-center text-[length:var(--text-subhead)] text-label-secondary">
             Analyse two captures to compare them. One is in; one to go.

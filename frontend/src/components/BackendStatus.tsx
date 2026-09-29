@@ -39,9 +39,9 @@ export function BackendStatus() {
       </div>
       <p className="pl-4 text-[length:var(--text-caption)] leading-snug text-label-tertiary">
         {state.kind === "up" &&
-          (state.health.parser_available
-            ? "IKE parser ready"
-            : "No IKE parser — results come from fixtures")}
+          `${state.health.rule_count} rules · model ${
+            state.health.model.trained ? state.health.model.model_version : "untrained"
+          }${state.health.live.interface_capture ? " · live capture ready" : ""}`}
         {state.kind === "down" && `Start it with uvicorn api.main:app, then reload. ${API_BASE}`}
       </p>
     </div>

@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useMemo } from "react";
+import { JobPicker } from "@/components/JobPicker";
 import { PeerGraph } from "@/components/PeerGraph";
 import { Toolbar } from "@/components/Toolbar";
 import { peerGraph, SEVERITY_HEX } from "@/lib/charts";
@@ -23,10 +24,12 @@ export default function GraphPage() {
   );
 
   return (
-    <div className="flex h-screen flex-col">
-      <Toolbar title="Peers" />
+    <div className="h-page flex flex-col">
+      <Toolbar title="Peers">
+        <JobPicker />
+      </Toolbar>
 
-      <div className="flex min-h-0 flex-1 flex-col px-7 py-6">
+      <div className="flex min-h-0 flex-1 flex-col px-4 py-6 md:px-7">
         <div className="flex flex-wrap items-baseline justify-between gap-x-8 gap-y-2">
           <p className="max-w-[62ch] text-[length:var(--text-footnote)] text-label-secondary">
             Each node is a peer address, sized by how many sessions it carries and coloured by its

@@ -24,8 +24,14 @@ it("shows what changed between two captures", () => {
 });
 
 it("asks for a second capture rather than showing an empty comparison", () => {
-  analyse("test_weak.pcap");
-  cy.window().then((win) => win.sessionStorage.clear());
-  cy.contains("a", "Compare").click();
+  // Jobs are backend-wide; pretend this is a fresh install holding one capture.
+  cy.intercept("GET", /\/jobs(\?.*)?$/, (req) =>
+    req.continue((res) => {
+      const jobs = typeof res.body === "string" ? JSON.parse(res.body) : res.body;
+      res.send(jobs.slice(0, 1));
+    }),
+  ).as("jobs");
+  cy.visit("/compare");
+  cy.wait("@jobs");
   cy.contains("Analyse two captures").should("be.visible");
 });

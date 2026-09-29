@@ -140,14 +140,75 @@ export interface AnomalyEvent {
 export interface Health {
   status: string;
   version: string;
-  parser_available: boolean;
+  rule_count: number;
+  model: { trained: boolean; model_version: string; algo: string | null };
+  live: { interface_capture: boolean; replay: boolean; state: LiveState };
+}
+
+/** What a capture held, independent of what the analysis made of it. */
+export interface CaptureStats {
+  packets: number;
+  ike_packets: number;
+  esp_packets: number;
+  duration_sec: number;
+  sessions: number;
+  incomplete_sessions: number;
+  orphan_esp_packets: number;
+}
+
+export type CaptureSource = VPNSession["capture_source"];
+
+/** One analysed capture -- an upload, or one live-capture run. */
+export interface JobSummary {
+  job_id: string;
+  capture_file: string | null;
+  source: CaptureSource;
+  created_at: string;
+  stats: CaptureStats;
+  session_count: number;
+  severity_counts: Record<Severity, number>;
+  posture_score: number;
+  anomaly_count: number;
+  capture_available: boolean;
 }
 
 export interface IngestResult {
   job_id: string;
   session_count: number;
-  fixture_mode: boolean;
+  anomaly_count: number;
+  stats: CaptureStats;
 }
+
+export interface Rule {
+  id: string;
+  description: string;
+  severity: Severity;
+  cve: string | null;
+  standard: string;
+}
+
+export type LiveState = "idle" | "running" | "stopped" | "error";
+
+export interface LiveStatus {
+  state: LiveState;
+  job_id: string | null;
+  source: string | null;
+  started_at: string | null;
+  stats: CaptureStats;
+  error: string | null;
+}
+
+export interface CaptureInterface {
+  name: string;
+  description: string;
+}
+
+/** Envelopes on /ws/live. */
+export type LiveMessage =
+  | { type: "session"; job_id: string; session: VPNSession }
+  | { type: "session_removed"; job_id: string; session_id: string }
+  | { type: "anomaly"; job_id: string; anomaly: AnomalyEvent }
+  | { type: "live"; status: LiveStatus };
 
 /** A session both captures hold, whose assessment got worse. */
 export interface DegradedSession {

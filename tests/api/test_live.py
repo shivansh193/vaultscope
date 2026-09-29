@@ -108,3 +108,44 @@ def test_interfaces_endpoint_answers_even_without_privilege(client):
     resp = client.get("/live/interfaces")
     assert resp.status_code == 200
     assert isinstance(resp.json(), list)
+
+
+async def test_a_session_whose_id_changes_is_retracted(tmp_path, monkeypatch):
+    """Mid-handshake an SA has no responder SPI; once it does, the old id must go."""
+    from api import live
+    from core.live import LiveSource
+    from core.models import VPNSession
+    from core.pipeline import Analysis
+
+    class Idle(LiveSource):
+        label = "test"
+
+        def start(self, out):
+            pass
+
+        def stop(self):
+            pass
+
+        running = True
+
+    published: list[dict] = []
+
+    async def publish(batch):
+        published.extend(batch)
+
+    run = live.LiveRun(Idle(), tmp_path, publish)
+    ticks = iter(
+        [
+            Analysis(sessions=[VPNSession(session_id="aa-0000")]),
+            Analysis(sessions=[VPNSession(session_id="aa-bbbb")]),
+        ]
+    )
+    monkeypatch.setattr(live, "analyze_capture", lambda *a, **k: next(ticks))
+    monkeypatch.setenv("VAULTSCOPE_DB", str(tmp_path / "t.sqlite"))
+    live.store.init_db()
+    await run._tick()
+    await run._tick()
+
+    removed = [m["session_id"] for m in published if m["type"] == "session_removed"]
+    added = [m["session"]["session_id"] for m in published if m["type"] == "session"]
+    assert added == ["aa-0000", "aa-bbbb"] and removed == ["aa-0000"]

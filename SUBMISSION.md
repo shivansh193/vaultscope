@@ -27,8 +27,8 @@ The PS asks for an **AI-powered** tool that:
 
 ## 2. What VaultScope is
 
-A **passive-first** IPsec security intelligence platform. Feed it a `.pcap`
-(or a live NIC) and it:
+A **passive-first** IPsec security intelligence platform. Feed it a `.pcap`,
+point it at a live NIC, or replay a stored capture, and it:
 
 1. **reconstructs the full IKE negotiation state** of every VPN session
    (IKEv1 Main / Aggressive / Quick Mode **and** IKEv2, from the raw bytes),
@@ -36,7 +36,9 @@ A **passive-first** IPsec security intelligence platform. Feed it a `.pcap`
    using only packet size / timing / direction — the payload is encrypted,
 3. **scores every session** against an 18-rule CVE-linked engine and detects
    **runtime attacks** (downgrade, proposal enumeration, PSK-hash harvesting,
-   SPI replay) that static config review cannot see,
+   SPI replay, rekey storms, unexpected NAT-T) that static config review cannot
+   see — each citing the **exact pcap frame numbers**, with the capture itself
+   downloadable so anyone can verify it in Wireshark,
 4. **produces** an executive PDF, a technical HTML report with per-finding CVE
    links and vendor-specific config diffs, SIEM-ready JSON/CEF, and a React
    dashboard with a risk-coloured peer graph,
@@ -57,18 +59,23 @@ then converge at Stage 5.
 | Stage | Component | What it does |
 |---|---|---|
 | **0** | `testbed/` | strongSwan peer pairs in Docker over a Cartesian config matrix (cipher × integrity × DH group × PFS × IP version × 6 traffic classes); traffic generators (sipp/RTP, ffmpeg, curl, swaks, hping3, a bursty-chat generator); capture script → labeled pcap + ground-truth JSON. **The dataset is itself a PS deliverable.** |
-| **1** | `core/ingestion/` | One pcap read → per-session IKE + ESP streams bucketed by `(SPI_i, SPI_r)` (IKEv2) / `(cookie_i, cookie_r)` (IKEv1). pyshark primary, scapy fallback. Flags NAT-T, fragmented IKE, mid-session captures. |
+| **1** | `core/capture.py`, `core/ingestion/` | **One** read of the pcap (`core/capture.py`) yields every IKE message and ESP/AH packet with its frame number, timestamp, peers and port; Stage 1 buckets them into SAs by `(SPI_i, SPI_r)` / `(cookie_i, cookie_r)` and hands each SA its own ESP. Stages 2 and 3 consume the same read. Flags NAT-T, fragmented IKE, mid-session captures. |
 | **2** | `core/ike_parser/` | **Hand-rolled RFC 7296 / RFC 2408 byte-level decoder** (no dependency on Wireshark for the logic). Recovers encryption, integrity, PRF, DH group, PFS status, auth method, SA lifetime, vendor, DPD, retransmission timing, and peer-certificate facts. Detects IKEv1 Aggressive Mode by **ID-payload-in-message-1**, not message count (retransmissions break count-based detection). |
 | **3** | `core/flow/` | 13-feature metadata vector per ESP flow: packet-size mean/std/percentiles, inter-arrival timing, direction ratio, and a burst model (`burst_count`, `burst_gap_ratio`, `payload_size_var_burst`) built to separate Video from Web. |
-| **4a** | `core/classifiers/` | RandomForest fallback that recovers encryption + DH group from IKE **message structure** when the parser can't — the KE payload length is a near-perfect fingerprint of the DH group even in a truncated capture. |
+| **4a** | `core/classifiers/` | RandomForest fallback that recovers encryption + DH group from IKE **message structure** when the parser can't — the KE payload length is a near-perfect fingerprint of the DH group. Fills **only** fields the parser left `unknown`, only above 0.6 confidence, and every such value is marked *inferred* in the console and reports. |
 | **4b** | `core/classifiers/` | **The AI showpiece.** RandomForest + XGBoost over the Stage 3 vector; auto-selects the better model by macro-F1. Ships a trained model plus `confusion_matrix.json`, per-class precision/recall/F1, and a feature-importance chart. |
 | **4c** | `core/rules/` | 18 rules as **data** (`rules.yaml`), four operators, evaluated against `ike.*`. Weighted penalty → 0–100 risk score; any CRITICAL rule forces overall severity. |
 | **5** | `reporting/` | Jinja2 → WeasyPrint. Executive PDF (1 page, plain English, top 3). Technical HTML (full session table, CVE/RFC links, vendor config diffs, the confusion matrix). JSON + escaped CEF export (one event per finding + a `VS-CLEAN` event per healthy tunnel so SIEM never loses a session). |
-| **6** | `frontend/` | Next.js / Tailwind / D3 / Recharts. Upload, session table (sortable, CRITICAL rows red), **D3 force-directed peer graph** coloured by worst-session risk, session drilldown, aggregate charts, live WebSocket stream, two-pcap historical diff, export panel. |
+| **6** | `frontend/` | Next.js / Tailwind / D3 / Recharts. Upload, capture history, session table (sortable, CRITICAL rows red, attacked sessions flagged), **D3 force-directed peer graph** coloured by worst-session risk, session drilldown with attack indicators and evidence frames, aggregate charts, **live capture** (interface or replay) over WebSocket, two-pcap historical diff, export panel. Responsive down to phone width. |
 
-Glue: `core/pipeline.py` runs the whole chain and **degrades gracefully** —
-every stage is probed independently, so a capture benefits from each component
-the moment it exists. `api/` is FastAPI + SQLite with auto-generated Swagger.
+Glue: `core/pipeline.py` is the **Analysis module** — `analyze_capture(path)`
+returns every session parsed, classified and scored, plus the anomalies and
+capture statistics, from one read of the file. `api/` is FastAPI + SQLite with
+auto-generated Swagger: every analysed capture is a **job** with a summary
+(severity mix, posture, anomaly count) that every view of the console shares.
+`core/live.py` puts live capture behind one seam with two adapters — `dumpcap`
+on a real NIC, and replay of a stored capture — both feeding the same Analysis
+module.
 
 ---
 
@@ -89,44 +96,47 @@ config diffs → SIEM export → risk-propagating peer graph.
 
 ## 5. The numbers
 
-- **~4,600 lines** of pipeline Python + **21** React components.
-- **~250** Python tests passing (parser, flow, classifiers, rules, reports, API,
-  ingestion, anomalies) — every RFC structure exercised against the real decoder.
+- **~5,700 lines** of pipeline/API Python, **16** React components across
+  **7** console views.
+- **331** Python tests (parser, capture reader, ingestion, flow, classifiers,
+  rules, anomalies, Analysis module, reports, API, jobs, live capture, the
+  Docker testbed), **52** vitest unit/component tests, **25** Cypress
+  end-to-end tests against the real stack. CI runs all three on every push.
 - **18** security rules, each tied to a CVE / RFC / NIST reference.
-- Traffic classifier: **macro-F1 ≈ 0.79** on the bootstrap set — honestly below
-  a fake 1.0, with the spec-predicted confusion pattern (VoIP/ICMP easy,
-  **Video↔Web the hard pair**). Retrains on the real strongSwan dataset with
-  one command.
-- **6** protocol-level attack detectors, each producing an `AnomalyEvent` with
-  **exact pcap frame numbers** as evidence.
+- Traffic classifier: **macro-F1 0.98** on a held-out split of the 300-capture
+  strongSwan dataset (up from 0.79 on the synthetic bootstrap it replaced). Read
+  it as proof the pipeline works end to end, **not** as a field accuracy — see §8.
+- **6** runtime attack detectors, each producing an `AnomalyEvent` with **exact
+  pcap frame numbers** as evidence; `data/demo/attack_capture.pcap` trips five
+  of them.
 
 ---
 
 ## 6. The 5-minute demo script
 
 > One command: `docker compose up`. Everything below is in the browser.
+> The full timed script is `DEMO_SCRIPT.md`.
 
-1. **Upload** a demo `.pcap` (mixed IKEv1 + IKEv2, a couple of weak tunnels).
-   → redirects to the session table, CRITICAL rows in red.
+1. **Upload** `data/demo/demo_capture.pcap` — six real strongSwan tunnels, weak
+   through strong. → the session table, CRITICAL rows in red.
 2. **Peer graph.** D3 force-directed. A node is a VPN peer; colour = its worst
-   session's risk; label = the **fingerprinted vendor** ("Cisco ASA",
-   "strongSwan"). Click the red node → the table filters to that peer.
-   *This is the single most visual moment — lead with it.*
-3. **Session drilldown.** Click a CRITICAL session:
-   - full IKE decode (version, mode, AES-128-CBC, **MODP1024**, PFS disabled),
-   - triggered rules with CVE links (**R04 → LOGJAM**, **R10 → PFS off**),
-   - the **traffic-type prediction** ("Video, 0.83 confidence") with the model
-     version stamped on it,
-   - the exact **vendor config diff** to fix it, in a monospace block.
-4. **Anomaly with evidence.** Point at a `DOWNGRADE_SUSPECTED` or
-   `AGGRESSIVE_MODE_PROBE` event: *"detected at packet #47, 14:32:01.443 —
-   open Wireshark and verify."* Judges can check it.
-5. **Reports.** Download the executive PDF (plain-English, top 3, one page) and
-   the technical HTML (session inventory, CVE links, **the confusion matrix**,
-   vendor diffs). Show the JSON/CEF export dropping straight into a SIEM.
-6. **Live mode + historical diff** (30 s each): new sessions appear in the table
-   within 2 s over WebSocket; load two pcaps and diff them — new peers, degraded
-   scores, changed cipher suites. *No other tool does the diff.*
+   session's risk. Click the red node → the table filters to that peer.
+3. **Session drilldown.** Click a CRITICAL session: full IKE decode (DES-CBC,
+   **MODP1024**), triggered rules with references (**R04 → LOGJAM**), the
+   **traffic-type prediction** with the model version stamped on it, and the
+   exact **vendor config diff** that fixes it.
+4. **Attack with evidence.** Upload `data/demo/attack_capture.pcap`. Five kinds
+   of attack indicator appear — Aggressive Mode probing, proposal enumeration,
+   downgrade, NAT-T from a public peer, a rekey storm — each saying *"frames
+   9, 10"*. Click **Download the capture**, open it in Wireshark, Go to Packet 9.
+   Judges can check it themselves.
+5. **Live.** On the Live page, replay the demo capture at 50×: sessions stream
+   into the table as the backend finds them, and the run is saved as its own job.
+   The same button captures from a real NIC when the host allows it.
+6. **Reports + diff.** Executive PDF (plain English, top 3, signs of attack),
+   technical HTML (inventory, CVE links, anomalies with frames, the confusion
+   matrix), JSON/CEF straight into a SIEM. Compare two captures: new peers,
+   gone peers, degraded scores.
 
 ---
 
@@ -167,15 +177,20 @@ config diffs → SIEM export → risk-propagating peer graph.
 
 ## 8. Honest limitations (say these before a judge asks)
 
-- The labeled dataset is **lab-clean** — no cross-traffic noise — so real-world
-  classifier accuracy will be lower than the reported metrics.
-- The shipped models are trained on a **synthetic bootstrap** set with realistic
-  per-class noise and class contamination; `python -m core.classifiers.train`
-  swaps in models trained on the captured strongSwan dataset.
-- Traffic-type inference is **side-channel** — it will never be 100%, and Video
-  vs Web is genuinely hard. We report that, we don't hide it.
-- Active mode (sending IKE probes to discover peers) is **secondary** and
-  minimal; VaultScope is a passive assessment platform first.
+- The labeled dataset is **lab-clean** — one tunnel, one traffic class, no
+  cross-traffic, no loss — so the 0.98 macro-F1 is an upper bound. Real
+  networks will score lower, and Video vs Web is genuinely hard.
+- The **Chat class is a disclosed substitute**: a scripted bursty generator,
+  not real messenger traffic.
+- **IKEv2 authentication is encrypted**, so it reads *undetermined* unless the
+  capture was decrypted; PSK-dependent rules (R06, R13) then stay silent rather
+  than guess.
+- `data/demo/attack_capture.pcap` is **synthetic** — built from the parser's
+  byte-level test builders to demonstrate the detectors with checkable evidence.
+  The detectors are threshold heuristics, not measured on real attack traffic.
+- Active mode (sending IKE probes to discover peers) is **not built**;
+  VaultScope is a passive assessment platform. Live capture needs capture
+  privilege on the host.
 
 ---
 
@@ -183,15 +198,15 @@ config diffs → SIEM export → risk-propagating peer graph.
 
 | # | Deliverable | Status |
 |---|---|---|
-| 1 | Labeled dataset (pcaps + JSONs) | Testbed + generator complete; run on a Linux/Docker host to produce the corpus |
-| 2 | Trained AI model artifacts (`model.pkl` + `eval_metrics.json` + `confusion_matrix.json`) | ✅ shipped (bootstrap; retrain on dataset) |
+| 1 | Labeled dataset (pcaps + JSONs) | ✅ 300 captures, all six classes; labels in `data/labels/`, corpus regenerated with `scripts/generate_dataset.py` |
+| 2 | Trained AI model artifacts (`model.pkl` + `eval_metrics.json` + `confusion_matrix.json`) | ✅ trained on the captured dataset (`source: pcap-dataset`) |
 | 3 | Working prototype (`docker compose up`) | ✅ |
 | 4 | Executive PDF report | ✅ |
 | 5 | Technical HTML report | ✅ |
-| 6 | JSON / CEF export | ✅ |
-| 7 | Dashboard (peer graph, drilldown, exports) | ✅ |
-| 8 | Demo video (3–5 min) | Script in §6 |
+| 6 | JSON / CEF export | ✅ (anomalies included) |
+| 7 | Dashboard (peer graph, drilldown, anomalies, live capture, exports) | ✅ |
+| 8 | Demo video (3–5 min) | Script ready in `DEMO_SCRIPT.md`; recording pending |
 | 9 | This document + product spec | ✅ (`docs/`, `SIH26160_LLD.md`) |
 | 10 | API reference (Swagger `/docs`) | ✅ |
 | 11 | Setup guide (`README.md`) | ✅ |
-| 12 | Disclosed limitations section | ✅ (§8, testbed docs, technical report) |
+| 12 | Disclosed limitations section | ✅ (§8, `README.md`, technical report) |

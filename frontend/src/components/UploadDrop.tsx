@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { ingest } from "@/lib/api";
-import { rememberJob } from "@/lib/job";
+import { useJobs } from "@/lib/jobs";
 
 type State =
   | { kind: "idle" }
@@ -13,6 +13,7 @@ type State =
 /** P4-T2: drop a pcap, watch it analyse, land on the sessions it produced. */
 export function UploadDrop() {
   const router = useRouter();
+  const { reload, select } = useJobs();
   const inputRef = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<State>({ kind: "idle" });
   const [over, setOver] = useState(false);
@@ -21,12 +22,8 @@ export function UploadDrop() {
     setState({ kind: "uploading", name: file.name });
     try {
       const result = await ingest(file);
-      rememberJob({
-        job_id: result.job_id,
-        capture_file: file.name,
-        session_count: result.session_count,
-        fixture_mode: result.fixture_mode,
-      });
+      await reload();
+      select(result.job_id);
       router.push("/sessions");
     } catch (error) {
       setState({ kind: "failed", why: (error as Error).message });
@@ -50,7 +47,7 @@ export function UploadDrop() {
           const file = e.dataTransfer.files[0];
           if (file) void analyse(file);
         }}
-        className={`rounded-2xl border border-dashed p-12 text-center transition-colors ${
+        className={`rounded-2xl border border-dashed p-6 text-center transition-colors md:p-12 ${
           over ? "border-accent bg-[color-mix(in_srgb,var(--accent)_10%,transparent)]" : "border-separator bg-surface"
         }`}
       >

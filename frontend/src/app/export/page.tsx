@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import { Toolbar } from "@/components/Toolbar";
-import { requestReport, type ReportType } from "@/lib/api";
-import { currentJob, jobHistory } from "@/lib/job";
+import { JobPicker } from "@/components/JobPicker";
+import { captureUrl, requestReport, type ReportType } from "@/lib/api";
+import { useJobs } from "@/lib/jobs";
 
 const REPORTS: { type: ReportType; title: string; note: string }[] = [
   {
@@ -14,25 +15,25 @@ const REPORTS: { type: ReportType; title: string; note: string }[] = [
   {
     type: "technical",
     title: "Technical report",
-    note: "Every session, every finding with its standard and CVE, and the vendor config diffs.",
+    note: "Every session, every finding with its standard and CVE, runtime anomalies with their evidence frames, and the vendor config diffs.",
   },
   {
     type: "json",
     title: "JSON export",
-    note: "The canonical session records, exactly as the pipeline persisted them.",
+    note: "The canonical session records, each carrying the anomalies raised against it.",
   },
   {
     type: "cef",
     title: "CEF export",
-    note: "Common Event Format, one line per finding, for a SIEM to ingest.",
+    note: "Common Event Format for a SIEM: one event per finding, one per anomaly.",
   },
 ];
 
 type Status = Record<string, { state: "building" | "ready" | "failed"; detail: string }>;
 
 export default function ExportPage() {
-  const [jobId, setJobId] = useState(() => (typeof window === "undefined" ? "" : currentJob()?.job_id ?? ""));
-  const history = typeof window === "undefined" ? [] : jobHistory();
+  const { current, jobs } = useJobs();
+  const jobId = current?.job_id ?? "";
   const [status, setStatus] = useState<Status>({});
 
   async function build(type: ReportType) {
@@ -48,29 +49,21 @@ export default function ExportPage() {
 
   return (
     <>
-      <Toolbar title="Export" />
-      <div className="px-7 py-6">
-        {history.length === 0 ? (
+      <Toolbar title="Export">
+        <JobPicker />
+      </Toolbar>
+      <div className="px-4 py-6 md:px-7">
+        {jobs.length === 0 ? (
           <p className="py-24 text-center text-[length:var(--text-subhead)] text-label-secondary">
             Nothing to export yet. Analyse a capture first.
           </p>
         ) : (
           <>
-            <label className="flex flex-wrap items-center gap-3 text-[length:var(--text-footnote)] text-label-secondary">
-              Capture
-              <select
-                data-testid="export-job"
-                value={jobId}
-                onChange={(e) => setJobId(e.target.value)}
-                className="rounded-md border border-separator bg-surface-raised px-2.5 py-1.5 text-label"
-              >
-                {history.map((job) => (
-                  <option key={job.job_id} value={job.job_id}>
-                    {job.capture_file} · {job.session_count} sessions
-                  </option>
-                ))}
-              </select>
-            </label>
+            <p className="text-[length:var(--text-footnote)] text-label-secondary">
+              Reports cover the capture selected above:{" "}
+              <span className="mono">{current?.capture_file}</span> · {current?.session_count}{" "}
+              sessions · {current?.anomaly_count} anomalies.
+            </p>
 
             <ul className="mt-6 grid max-w-4xl gap-4 md:grid-cols-2">
               {REPORTS.map(({ type, title, note }) => {
@@ -114,6 +107,24 @@ export default function ExportPage() {
                   </li>
                 );
               })}
+              {current?.capture_available && (
+                <li className="flex flex-col rounded-xl border border-separator bg-surface p-5">
+                  <h3 className="text-[length:var(--text-headline)] font-semibold tracking-tight">
+                    Original capture
+                  </h3>
+                  <p className="mt-1 text-[length:var(--text-footnote)] text-label-secondary">
+                    The exact pcap this job analysed. Every evidence frame number in the reports
+                    indexes into this file — open it in Wireshark to verify.
+                  </p>
+                  <a
+                    data-testid="export-capture"
+                    href={captureUrl(jobId)}
+                    className="mt-4 self-start rounded-lg border border-separator bg-surface-raised px-3.5 py-1.5 text-[length:var(--text-footnote)] font-medium text-label hover:bg-surface-control"
+                  >
+                    Download capture
+                  </a>
+                </li>
+              )}
             </ul>
           </>
         )}

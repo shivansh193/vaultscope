@@ -135,6 +135,18 @@ class LiveRun:
             if self._seen_sessions.get(s.session_id) != fingerprint:
                 self._seen_sessions[s.session_id] = fingerprint
                 changed.append(s)
+        # An SA caught mid-handshake has no responder SPI yet, so its id changes
+        # once the response lands. Retract ids the newest analysis no longer has.
+        current = {s.session_id for s in analysis.sessions}
+        gone = [sid for sid in self._seen_sessions if sid not in current]
+        for sid in gone:
+            del self._seen_sessions[sid]
+        retractions = [
+            {"type": "session_removed", "job_id": self.job_id, "session_id": sid} for sid in gone
+        ]
+
         fresh = [e for e in analysis.anomalies if e.anomaly_id not in self._seen_events]
         self._seen_events.update(e.anomaly_id for e in fresh)
-        await self.publish(messages(self.job_id, changed, fresh) + [self.status_message()])
+        await self.publish(
+            retractions + messages(self.job_id, changed, fresh) + [self.status_message()]
+        )

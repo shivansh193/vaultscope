@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { API_BASE, ApiError, ingest, listSessions, liveSocketUrl } from "./api";
+import {
+  API_BASE,
+  ApiError,
+  captureUrl,
+  deleteJob,
+  ingest,
+  listJobs,
+  listSessions,
+  liveSocketUrl,
+  liveStart,
+} from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -35,9 +45,37 @@ describe("api client", () => {
   });
 
   it("derives the websocket URL from the http base", () => {
-    expect(liveSocketUrl("eth0")).toBe(
-      `${API_BASE.replace(/^http/, "ws")}/ws/live?nic=eth0`,
-    );
+    expect(liveSocketUrl()).toBe(`${API_BASE.replace(/^http/, "ws")}/ws/live`);
+  });
+
+  it("surfaces FastAPI's detail sentence rather than the raw JSON body", async () => {
+    stubFetch({
+      ok: false,
+      status: 415,
+      text: async () => JSON.stringify({ detail: "not a pcap or pcapng capture" }),
+    });
+    await expect(listJobs()).rejects.toMatchObject({
+      status: 415,
+      message: "not a pcap or pcapng capture",
+    });
+  });
+
+  it("treats 204 No Content as success with no body", async () => {
+    const fetchMock = stubFetch({ status: 204, json: async () => Promise.reject(new Error("no body")) });
+    await expect(deleteJob("j1")).resolves.toBeUndefined();
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: "DELETE" });
+  });
+
+  it("starts a replay run with a JSON body", async () => {
+    const fetchMock = stubFetch({ json: async () => ({ state: "running" }) });
+    await liveStart({ source: "replay", speed: 50 });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(`${API_BASE}/live/start`);
+    expect(JSON.parse(init.body as string)).toEqual({ source: "replay", speed: 50 });
+  });
+
+  it("builds a capture download link per job", () => {
+    expect(captureUrl("a b")).toBe(`${API_BASE}/jobs/a%20b/capture`);
   });
 });
 

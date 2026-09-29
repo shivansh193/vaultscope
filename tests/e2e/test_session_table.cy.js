@@ -30,5 +30,5 @@ it("opens the drilldown with the full IKE decode and a config diff", () => {
   cy.get("[data-testid=session-row][data-severity=CRITICAL]").first().click();
   cy.get("[data-testid=session-drilldown]").should("be.visible");
   cy.get("[data-testid=session-drilldown]").contains("IKE negotiation");
-  cy.get("[data-testid=config-diff]").should("be.visible");
+  cy.get("[data-testid=config-diff]").first().scrollIntoView().should("be.visible");
 });

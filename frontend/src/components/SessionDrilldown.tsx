@@ -1,15 +1,22 @@
 "use client";
 
+import { AnomalyList } from "@/components/AnomalyList";
 import { SEVERITY_COLOR } from "@/lib/severity";
-import type { VPNSession } from "@/lib/types";
+import type { AnomalyEvent, VPNSession } from "@/lib/types";
+
+/** Set by the pipeline when a session's peers carried no ESP to measure. */
+export const NO_ESP = "no-esp-observed";
+
+const inferred = (s: VPNSession, value: string) =>
+  s.ike.confidence_source === "classifier" && value !== "unknown" ? `${value} (inferred)` : value;
 
 const IKE_FIELDS: [label: string, read: (s: VPNSession) => string][] = [
   ["Version", (s) => s.ike.version + (s.ike.aggressive_mode ? " Aggressive Mode" : "")],
   ["Mode", (s) => s.ike.mode],
-  ["Encryption", (s) => s.ike.encryption],
+  ["Encryption", (s) => inferred(s, s.ike.encryption)],
   ["Integrity", (s) => s.ike.integrity],
   ["PRF", (s) => s.ike.prf],
-  ["DH group", (s) => s.ike.dh_group],
+  ["DH group", (s) => inferred(s, s.ike.dh_group)],
   ["PFS", (s) => s.ike.pfs_status],
   ["Authentication", (s) => s.ike.auth_method ?? "undetermined"],
   ["SA lifetime", (s) => `${s.ike.sa_lifetime_sec} s`],
@@ -17,6 +24,14 @@ const IKE_FIELDS: [label: string, read: (s: VPNSession) => string][] = [
   ["NAT traversal", (s) => (s.ike.nat_traversal ? "detected" : "no")],
   ["Anti-replay", (s) => (s.ike.anti_replay ? "on" : "off")],
   ["Vendor", (s) => s.ike.vendor],
+  ["First seen", (s) => (s.timestamp ? s.timestamp.replace("T", " ").slice(0, 19) + " UTC" : "unknown")],
+  [
+    "IKE frames",
+    (s) =>
+      s.packet_refs.length === 0
+        ? "none"
+        : s.packet_refs.slice(0, 10).join(", ") + (s.packet_refs.length > 10 ? ", …" : ""),
+  ],
 ];
 
 /**
@@ -26,17 +41,24 @@ const IKE_FIELDS: [label: string, read: (s: VPNSession) => string][] = [
 export function SessionDrilldown({
   session,
   onClose,
+  anomalies = [],
+  jobId,
+  captureAvailable,
 }: {
   session: VPNSession;
   onClose: () => void;
+  anomalies?: AnomalyEvent[];
+  jobId?: string;
+  captureAvailable?: boolean;
 }) {
   const { security_assessment: assessment, traffic_prediction: prediction } = session;
+  const noEsp = prediction.model_version === NO_ESP;
 
   return (
     <aside
       data-testid="session-drilldown"
       aria-label={`Session ${session.session_id}`}
-      className="flex h-full w-[420px] shrink-0 flex-col overflow-y-auto border-l border-separator bg-surface"
+      className="fixed inset-0 z-30 flex flex-col overflow-y-auto bg-surface md:static md:inset-auto md:z-auto md:h-full md:w-[420px] md:shrink-0 md:border-l md:border-separator"
     >
       <header className="sticky top-0 flex items-start justify-between gap-3 border-b border-separator bg-surface px-5 py-4">
         <div className="min-w-0">
@@ -79,19 +101,46 @@ export function SessionDrilldown({
             {assessment.findings.length === 1 ? "" : "s"}
           </p>
         </div>
-        <div className="ml-auto text-right">
-          <p className="text-[length:var(--text-subhead)]">{prediction.predicted_type}</p>
-          <p className="text-[length:var(--text-footnote)] text-label-tertiary">
-            {Math.round(prediction.confidence * 100)}% · {prediction.model_version}
-          </p>
+        <div className="ml-auto text-right" data-testid="traffic-prediction">
+          {noEsp ? (
+            <>
+              <p className="text-[length:var(--text-subhead)] text-label-secondary">No ESP seen</p>
+              <p className="text-[length:var(--text-footnote)] text-label-tertiary">
+                nothing to infer traffic from
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-[length:var(--text-subhead)]">{prediction.predicted_type}</p>
+              <p className="text-[length:var(--text-footnote)] text-label-tertiary">
+                {Math.round(prediction.confidence * 100)}% · {prediction.model_version}
+              </p>
+            </>
+          )}
         </div>
       </div>
 
       {!session.ike.capture_complete && (
         <p className="border-b border-separator px-5 py-3 text-[length:var(--text-footnote)] text-medium">
-          Partial decode. The capture did not reveal every parameter, so unrevealed fields show
-          their default rather than what the peers actually negotiated.
+          Partial decode. The capture did not include the full handshake, so any parameter it
+          never revealed reads <span className="mono">unknown</span> and is not scored — nothing
+          here is a guess passed off as an observation.
         </p>
+      )}
+
+      {anomalies.length > 0 && (
+        <section className="border-b border-separator px-5 py-4" data-testid="session-anomalies">
+          <h3 className="text-[length:var(--text-subhead)] font-semibold">Attack indicators</h3>
+          <p className="mt-1 mb-3 text-[length:var(--text-caption)] text-label-tertiary">
+            Behaviour across this capture that looks like an attacker, not a misconfiguration.
+          </p>
+          <AnomalyList
+            anomalies={anomalies}
+            jobId={jobId}
+            captureAvailable={captureAvailable}
+            compact={false}
+          />
+        </section>
       )}
 
       <section className="border-b border-separator px-5 py-4">
@@ -112,7 +161,7 @@ export function SessionDrilldown({
         </h3>
         {assessment.findings.length === 0 ? (
           <p className="mt-2 text-[length:var(--text-footnote)] text-label-secondary">
-            This session passed all fifteen checks.
+            This session passed every rule in the table.
           </p>
         ) : (
           <ul className="mt-3 flex flex-col gap-4">

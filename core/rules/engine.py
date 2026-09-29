@@ -1,6 +1,6 @@
 """Stage 4c rule engine + scoring model (P3-T1, P3-T2).
 
-Evaluates a :class:`~core.models.VPNSession` against the 15-rule table in
+Evaluates a :class:`~core.models.VPNSession` against the 18-rule table in
 ``rules.yaml`` and returns a populated
 :class:`~core.models.SecurityAssessment`. The rule table is data: adding or
 retuning a rule means editing the YAML, never this file.

@@ -7,9 +7,13 @@
 
 import type {
   AnomalyEvent,
+  CaptureInterface,
   Health,
   IngestResult,
+  JobSummary,
+  LiveStatus,
   ModelMetrics,
+  Rule,
   SessionDiff,
   Severity,
   VPNSession,
@@ -30,14 +34,32 @@ export class ApiError extends Error {
   }
 }
 
+/** FastAPI errors arrive as {"detail": "..."}; show the sentence, not the JSON. */
+function readableDetail(body: string): string {
+  try {
+    const parsed = JSON.parse(body) as { detail?: unknown };
+    if (typeof parsed.detail === "string") return parsed.detail;
+  } catch {
+    // not JSON -- fall through to the raw text
+  }
+  return body;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, init);
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
-    throw new ApiError(response.status, detail || response.statusText);
+    throw new ApiError(response.status, readableDetail(detail) || response.statusText);
   }
+  if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
+
+const json = (body: unknown): RequestInit => ({
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(body),
+});
 
 function query(params: Record<string, string | number | undefined>): string {
   const search = new URLSearchParams();
@@ -66,8 +88,32 @@ export const listSessions = (
 export const getSession = (sessionId: string) =>
   request<VPNSession>(`/session/${encodeURIComponent(sessionId)}`);
 
-export const listEvents = (params: { session_id?: string; severity?: string } = {}) =>
-  request<AnomalyEvent[]>(`/events${query(params)}`);
+export const listEvents = (
+  params: { job_id?: string; session_id?: string; severity?: string } = {},
+) => request<AnomalyEvent[]>(`/events${query(params)}`);
+
+export const listJobs = () => request<JobSummary[]>("/jobs");
+
+export const getJob = (jobId: string) =>
+  request<JobSummary>(`/jobs/${encodeURIComponent(jobId)}`);
+
+export const deleteJob = (jobId: string) =>
+  request<void>(`/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
+
+/** The capture a job analysed; evidence frame numbers index into this file. */
+export const captureUrl = (jobId: string) => `${API_BASE}/jobs/${encodeURIComponent(jobId)}/capture`;
+
+export const listRules = () => request<Rule[]>("/rules");
+
+export const liveStatus = () => request<LiveStatus>("/live/status");
+
+export const liveInterfaces = () => request<CaptureInterface[]>("/live/interfaces");
+
+export const liveStart = (
+  body: { source: "replay"; job_id?: string; speed?: number } | { source: "interface"; interface: string },
+) => request<LiveStatus>("/live/start", json(body));
+
+export const liveStop = () => request<LiveStatus>("/live/stop", { method: "POST" });
 
 export const diffJobs = (baseJob: string, compareJob: string) =>
   request<SessionDiff>(`/sessions/diff${query({ base_job: baseJob, compare_job: compareJob })}`);
@@ -77,11 +123,7 @@ export type ReportType = "executive" | "technical" | "json" | "cef";
 export async function requestReport(jobId: string, type: ReportType): Promise<string> {
   const { download_url } = await request<{ download_url: string }>(
     `/report/${encodeURIComponent(jobId)}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type }),
-    },
+    json({ type }),
   );
   return download_url.startsWith("http") ? download_url : `${API_BASE}${download_url}`;
 }
@@ -93,10 +135,9 @@ export async function requestReport(jobId: string, type: ReportType): Promise<st
  * where the console is served same-origin -- so resolve against the page
  * before switching the scheme.
  */
-export function liveSocketUrl(nic?: string): string {
+export function liveSocketUrl(): string {
   const origin = typeof window === "undefined" ? "http://localhost" : window.location.href;
   const url = new URL(`${API_BASE}/ws/live`, origin);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  if (nic) url.searchParams.set("nic", nic);
   return url.toString();
 }

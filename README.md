@@ -18,27 +18,51 @@ Full design: [`docs/VaultScope_Product_Spec.docx`](docs/VaultScope_Product_Spec.
 | Path | Stage | Owner |
 |---|---|---|
 | `testbed/` | Stage 0 — testbed & dataset generator | A |
-| `core/ingestion/` | Stage 1 — ingestion engine | A |
+| `core/capture.py` | the one pcap reader: IKE + ESP frames with frame number, time, peers | A |
+| `core/ingestion/` | Stage 1 — ingestion engine (buckets frames into SAs) | A |
 | `core/ike_parser/` | Stage 2 — IKEv1/v2 parser | A |
 | `core/flow/` | Stage 3 — ESP flow feature extractor | A |
 | `core/classifiers/` | Stage 4a/4b — protocol + traffic-type ML | A |
 | `core/rules/` | Stage 4c — security rule engine | B |
+| `core/pipeline.py` | the Analysis module: capture in, sessions + anomalies + stats out | B |
+| `core/anomalies.py` | cross-session runtime attack detectors | B |
+| `core/live.py` | live capture sources: `dumpcap` on a NIC, or replay of a stored capture | B |
 | `reporting/` | Stage 5 — scoring + report aggregator | B |
-| `api/` | FastAPI backend + WebSocket | B |
+| `api/` | FastAPI backend, job store, live-run driver, WebSocket | B |
 | `frontend/` | Stage 6 — React dashboard | B |
 | `data/` | dataset: pcaps + ground-truth JSONs | A |
 | `models/` | trained model artifacts + eval metrics | A |
 | `tests/` | mirrors the slices above; run with `pytest` | both |
 | `docs/` | product spec + API reference + setup guide | both |
 
-Blocks are developed async against the shared data model (spec Section 5) and
-API contract (spec Section 11). `data/mock/` holds fixture JSON so Block B can
-build the UI before the backend is live.
+Every stage reads and writes the one data model in `core/models.py` (spec
+Section 5); the API follows spec Section 11 and publishes its own reference at
+`/docs`.
+
+## How a capture flows
+
+```
+pcap ──► core.capture.read_capture ──► one read: IkeFrame[] + EspFrame[]
+              │
+              ├─► Stage 1  bucket into IKE SAs, attach each SA's ESP by peer pair
+              ├─► Stage 2  parse each SA with its own frames, times, ports, ESP
+              ├─► Stage 4a fill any field the handshake hid (marked "inferred")
+              ├─► Stage 3  flow features from the same ESP frames
+              ├─► Stage 4b traffic type (or "no ESP seen" -- never a zero-vector guess)
+              ├─► Stage 4c 18 CVE-linked rules → risk score + findings + fixes
+              └─► anomalies across sessions, each citing pcap frame numbers
+                        │
+                        ▼
+                 Analysis ──► job store (SQLite) ──► API / WebSocket / reports
+```
+
+`core.pipeline.analyze_capture(path)` is the whole thing. Uploads and live
+runs both go through it; nothing downstream assembles part of a result itself.
 
 ## Prerequisites
 
 - Python **3.11**
-- `tshark` / Wireshark on `PATH` (runtime dependency of `pyshark`)
+- `dumpcap` (ships with Wireshark / tshark) — only for live capture on a real interface
 - `pango` + `cairo` (runtime dependency of `weasyprint`, Stage 5)
 - Docker + Docker Compose (Stage 0 testbed, full-stack demo)
 - Node 18+ (Stage 6 frontend)
@@ -86,7 +110,7 @@ dependency-resolution conflict.
 
 | Tool | Needed by | Install |
 |---|---|---|
-| `tshark` | `pyshark`, Stage 1 ingestion | macOS `brew install wireshark` · Debian/Ubuntu `apt install tshark` · Windows: install Wireshark, add to PATH |
+| `dumpcap` | live interface capture (`core/live.py`) | macOS `brew install wireshark` (plus Wireshark's ChmodBPF for capture rights) · Debian/Ubuntu `apt install tshark` · Windows: install Wireshark, add to PATH |
 | pango / glib | `weasyprint`, Stage 5 reports | macOS `brew install pango libffi` · Debian/Ubuntu `apt install libpango-1.0-0 libpangoft2-1.0-0` · Windows: GTK runtime |
 
 > **macOS (Apple Silicon):** `brew install pango libffi` is enough — importing
@@ -96,7 +120,7 @@ dependency-resolution conflict.
 
 > On Windows, `weasyprint` (Stage 5, Block B) needs the GTK runtime. Block A
 > work does not require it; install the Block A subset if the full install fails on your box:
-> `pip install scapy pyshark scikit-learn xgboost numpy pandas matplotlib joblib pyyaml pytest pytest-cov`
+> `pip install scapy scikit-learn xgboost numpy pandas matplotlib joblib pyyaml pytest pytest-cov`
 
 ## Running the whole stack
 
@@ -120,6 +144,53 @@ uvicorn api.main:app --reload           # backend on :8000, Swagger at /docs
 cd frontend && npm run dev              # console on :3000
 ```
 
+### Configuration
+
+Environment only, so the same image runs in dev, Compose and CI.
+
+| Variable | Default | What it controls |
+|---|---|---|
+| `VAULTSCOPE_DB` | `vaultscope.sqlite` | SQLite database |
+| `VAULTSCOPE_CAPTURE_DIR` | `data/captures/` | analysed captures, kept so evidence frames can be checked |
+| `VAULTSCOPE_KEEP_CAPTURES` | `1` | set `0` to delete each upload after analysis |
+| `VAULTSCOPE_REPORT_DIR` | `reporting/out/` | rendered reports |
+| `VAULTSCOPE_MAX_UPLOAD_MB` | `512` | upload size cap (413 above it) |
+| `NEXT_PUBLIC_API_BASE` | `http://localhost:8000` | where the console finds the API (build time) |
+
+### Live capture
+
+The **Live** page starts a run from one of two sources behind the same seam
+(`core/live.py`), and either way sessions and anomalies stream in over
+`/ws/live` and the run is saved as a job:
+
+- **Replay** a stored capture — the bundled `data/demo/demo_capture.pcap` or any
+  upload — at a chosen speed. Needs no privileges; it is what the demo and the
+  tests use.
+- **Interface** — `dumpcap` on a real NIC, filtered to IKE/ESP/AH. Needs capture
+  rights: Wireshark's ChmodBPF on macOS, `CAP_NET_RAW` on Linux. In Docker on a
+  Linux host: `docker compose -f docker-compose.yml -f docker-compose.live.yml up`.
+
+The run re-analyses its growing capture every two seconds, so an SA whose
+handshake and ESP land in different ticks is still one session, and every
+evidence frame number points into a file you can download from the job.
+
+### API at a glance
+
+Full reference with schemas at `/docs` (Swagger) and `/openapi.json`.
+
+| Route | Purpose |
+|---|---|
+| `POST /ingest` | analyse an uploaded pcap / pcapng → new job (415 if not a capture, 413 if too big) |
+| `GET /jobs` · `GET /jobs/{id}` · `DELETE /jobs/{id}` | analysed captures with severity mix, posture, anomaly count, stats |
+| `GET /jobs/{id}/capture` | the exact capture a job analysed — evidence frames index into it |
+| `GET /sessions?job_id=&severity=` · `GET /session/{id}` | assessed sessions |
+| `GET /events?job_id=` | runtime anomalies, worst first, with evidence frames |
+| `GET /sessions/diff?base_job=&compare_job=` | new / gone / degraded sessions between two captures |
+| `POST /report/{job_id}` | executive PDF, technical HTML, JSON or CEF |
+| `GET /rules` | the 18-rule table |
+| `POST /live/start` · `POST /live/stop` · `GET /live/status` · `GET /live/interfaces` | live runs |
+| `WS /ws/live` | `{"type": "session" \| "anomaly" \| "live", ...}` as they happen |
+
 ## Running tests
 
 ```bash
@@ -131,9 +202,13 @@ ruff check . && ruff format --check .
 ```
 
 `tests/test_environment.py` is the environment smoke test: it asserts the
-directory skeleton, the importable dependency set, `tshark` on `PATH`, an
-end-to-end `scapy` → `pyshark` pcap round-trip, and `weasyprint` PDF rendering.
+directory skeleton, the importable dependency set, `dumpcap` for live capture,
+a `scapy` → `core.capture` pcap round-trip, and `weasyprint` PDF rendering.
 Run it first on a new box.
+
+CI (`.github/workflows/ci.yml`) runs ruff and pytest (minus the Docker testbed
+and the 129 MB corpus), the console's lint, types, vitest and build, and the
+Cypress suite against a real backend on every push.
 
 `pyproject.toml` sets `pythonpath = ["."]`, so `import core.ike_parser` works
 with no install step.
@@ -149,6 +224,13 @@ npm run e2e     # cypress, against a running backend on :8000 and console on :30
 The Cypress specs in `tests/e2e/` drive a real stack rather than a mock, so a
 green run means the browser, the API and the parser all agree. Their pcap
 fixtures are generated — rebuild with `python scripts/generate_e2e_fixtures.py`.
+
+### Demo captures
+
+| File | What it is |
+|---|---|
+| `data/demo/demo_capture.pcap` | six real strongSwan tunnels from the dataset, weak through strong, all six traffic classes (`scripts/make_demo_capture.py`) |
+| `data/demo/attack_capture.pcap` | a **synthetic** gateway-under-attack capture built from the parser's test builders; trips five anomaly detectors (`scripts/make_attack_capture.py`) |
 
 ## Deliverables
 
@@ -212,9 +294,24 @@ handshake there is no second DH exchange to observe, so `pfs_status` is
 revealed: `capture_complete` goes false rather than a default being passed off
 as an observation.
 
-**IKEv2 auth method is not observable.** IKE_AUTH is encrypted, so a PSK tunnel
-currently reports the model default rather than `None`. Tracked as a P2-T4 gap
-in the parser's module docstrings; rules R06 and R13 depend on it.
+**IKEv2 auth method is not observable.** IKE_AUTH is encrypted, so an IKEv2
+tunnel reports its authentication method as undetermined (`None`) unless the
+capture was decrypted. Rules R06 and R13 need a proven PSK and therefore do not
+fire on IKEv2 — a deliberate false negative rather than a guessed positive.
+
+**Nothing unobserved is scored.** A parameter the capture never revealed reads
+`unknown` and triggers no rule. Where Stage 4a infers encryption or DH group
+from message structure, the value is marked *inferred* everywhere it appears.
+
+**The attack capture is synthetic.** `data/demo/attack_capture.pcap` exists to
+show the anomaly detectors working with checkable evidence; it is built from
+the parser's byte-level test builders, not captured from a real attack. The
+detectors are threshold heuristics over one capture's sessions and have not
+been measured against real attack traffic.
+
+**Live runs are bounded.** A run re-analyses its whole capture each tick and
+stops at 250,000 IPsec packets, so cost stays predictable; start a new run to
+continue.
 
 **The dataset is IKEv2 only.** The parser's IKEv1 path is covered by synthetic
 fixtures, not by real captures.

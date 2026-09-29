@@ -54,6 +54,8 @@
 
   --sidebar-width: 232px;
   --toolbar-height: 52px;
+  /* The sidebar folds into a top bar on narrow screens; 0 once it is a sidebar. */
+  --mobile-bar: 48px;
 
   /* Apple's type scale, in the roles this console actually uses. */
   --text-large-title: 2.125rem;
@@ -88,8 +90,19 @@
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
 }
 
+@media (min-width: 48rem) {
+  :root {
+    --mobile-bar: 0px;
+  }
+}
+
 html {
   color-scheme: dark;
+}
+
+/* A full-height view under whatever chrome the breakpoint puts above it. */
+.h-page {
+  height: calc(100dvh - var(--mobile-bar));
 }
 
 body {

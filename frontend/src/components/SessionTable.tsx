@@ -28,8 +28,11 @@ export function SessionTable({
   onSort,
   onSelect,
   selected,
+  flagged,
 }: {
   sessions: VPNSession[];
+  /** Session ids with runtime anomalies against them; they get a marker. */
+  flagged?: Set<string>;
   /** Omitted when the rows are in an order no column owns -- the live stream. */
   sort?: SortKey;
   direction?: SortDirection;
@@ -119,6 +122,15 @@ export function SessionTable({
               </td>
               <td className="whitespace-nowrap py-2.5 pr-4" data-field="ike_version">
                 {session.ike.version}
+                {flagged?.has(session.session_id) && (
+                  <span
+                    data-testid="anomaly-flag"
+                    title="Runtime anomaly raised against this session"
+                    className="ml-1.5 rounded bg-[color-mix(in_srgb,var(--severity-critical)_20%,transparent)] px-1 text-[length:var(--text-caption)] text-critical"
+                  >
+                    attack
+                  </span>
+                )}
                 {session.ike.aggressive_mode && (
                   <span className="ml-1.5 text-critical">Aggressive</span>
                 )}
@@ -133,10 +145,16 @@ export function SessionTable({
                 {session.ike.pfs_status}
               </td>
               <td className="py-2.5 pr-4" data-field="traffic_type">
-                {session.traffic_prediction.predicted_type}
-                <span className="ml-1.5 tabular text-label-tertiary">
-                  {Math.round(session.traffic_prediction.confidence * 100)}%
-                </span>
+                {session.traffic_prediction.model_version === "no-esp-observed" ? (
+                  <span className="text-label-tertiary">no ESP</span>
+                ) : (
+                  <>
+                    {session.traffic_prediction.predicted_type}
+                    <span className="ml-1.5 tabular text-label-tertiary">
+                      {Math.round(session.traffic_prediction.confidence * 100)}%
+                    </span>
+                  </>
+                )}
               </td>
               <td className="tabular py-2.5 pr-4 text-label-secondary" data-field="finding_count">
                 {findings.length}

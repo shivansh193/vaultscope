@@ -1,0 +1,19 @@
+# Live capture on the Docker host's real interfaces (Linux hosts only).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.live.yml up --build
+#
+# The backend joins the host network namespace so dumpcap sees the host's
+# NICs, and gets the two capabilities packet capture needs -- nothing more.
+# Docker Desktop (macOS / Windows) runs containers in a VM, so there this only
+# sees the VM's interfaces; run the backend natively for live capture there.
+services:
+  backend:
+    network_mode: host
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+
+  frontend:
+    # With the backend on the host network, nginx reaches it via the host.
+    extra_hosts:
+      - "backend:host-gateway"
