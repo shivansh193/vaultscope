@@ -144,6 +144,22 @@ uvicorn api.main:app --reload           # backend on :8000, Swagger at /docs
 cd frontend && npm run dev              # console on :3000
 ```
 
+### Hosted demo (Render + Vercel)
+
+The API runs on Render from the same Dockerfile; the console is a static build
+on Vercel that talks to it cross-origin.
+
+1. **API on Render:** New → Blueprint → this repository. `render.yaml` turns
+   interface capture off, caps uploads at 50 MB and generates an operator token.
+   Note the service URL, e.g. `https://vaultscope-api.onrender.com`.
+2. **Console on Vercel:** from `frontend/`, deploy with the API URL baked in:
+   `vercel deploy --prod -e NEXT_PUBLIC_API_BASE=<render url> --build-env NEXT_PUBLIC_API_BASE=<render url>`.
+3. Back on Render, set `VAULTSCOPE_CORS_ORIGINS` to the Vercel URL and redeploy.
+
+Render's free plan sleeps after inactivity (the first request takes ~a minute)
+and keeps no disk, so hosted jobs are temporary. For the full product — live
+interface capture, persistent jobs — run `docker compose up` on the analysis box.
+
 ### Configuration
 
 Environment only, so the same image runs in dev, Compose and CI.
@@ -155,6 +171,9 @@ Environment only, so the same image runs in dev, Compose and CI.
 | `VAULTSCOPE_KEEP_CAPTURES` | `1` | set `0` to delete each upload after analysis |
 | `VAULTSCOPE_REPORT_DIR` | `reporting/out/` | rendered reports |
 | `VAULTSCOPE_MAX_UPLOAD_MB` | `512` | upload size cap (413 above it) |
+| `VAULTSCOPE_CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | browser origins allowed to call the API (comma-separated). Compose needs none: nginx serves the console same-origin |
+| `VAULTSCOPE_API_TOKEN` | unset (open) | operator token for deleting jobs and interface capture, sent as `X-VaultScope-Token`; uploads and replays stay open |
+| `VAULTSCOPE_INTERFACE_CAPTURE` | `1` | `0` turns off live capture on real NICs (public deployments) |
 | `NEXT_PUBLIC_API_BASE` | `http://localhost:8000` | where the console finds the API (build time) |
 
 ### Live capture
@@ -189,7 +208,7 @@ Full reference with schemas at `/docs` (Swagger) and `/openapi.json`.
 | `POST /report/{job_id}` | executive PDF, technical HTML, JSON or CEF |
 | `GET /rules` | the 18-rule table |
 | `POST /live/start` · `POST /live/stop` · `GET /live/status` · `GET /live/interfaces` | live runs |
-| `WS /ws/live` | `{"type": "session" \| "anomaly" \| "live", ...}` as they happen |
+| `WS /ws/live` | `{"type": "session" \| "session_removed" \| "anomaly" \| "anomaly_removed" \| "live", ...}` as they happen; `*_removed` retracts a record a later tick superseded |
 
 ## Running tests
 
@@ -294,10 +313,22 @@ handshake there is no second DH exchange to observe, so `pfs_status` is
 revealed: `capture_complete` goes false rather than a default being passed off
 as an observation.
 
-**IKEv2 auth method is not observable.** IKE_AUTH is encrypted, so an IKEv2
-tunnel reports its authentication method as undetermined (`None`) unless the
-capture was decrypted. Rules R06 and R13 need a proven PSK and therefore do not
-fire on IKEv2 — a deliberate false negative rather than a guessed positive.
+**IKEv2 auth method, mode and PFS are not observable.** IKE_AUTH and
+CREATE_CHILD_SA are encrypted, so unless the capture was decrypted an IKEv2
+tunnel reports its authentication method as undetermined, its mode
+(tunnel/transport) as `unknown` and PFS as `unknown`. On the 300-capture dataset
+that is every capture: cipher, integrity, DH group, IKE version and IP version
+are recovered 300/300, mode, PFS and auth 0/300. Rules R06, R10 and R13 therefore
+stay silent on IKEv2 — a deliberate false negative rather than a guessed
+positive. IKEv1 carries mode and lifetime in Quick Mode, where they are read.
+
+**SA lifetime is only seen on IKEv1.** IKEv2 lifetimes are local policy and never
+cross the wire, so they read "not observed" and R11/R12 cannot fire on IKEv2.
+
+**SPI-collision detection does not fire through the pipeline.** Stage 1 keys an
+SA on its initiator SPI alone, so two SAs reusing one SPI across different peers
+are merged before the detector sees them. The detector works on session lists
+(and is tested there); the other five fire end to end.
 
 **Nothing unobserved is scored.** A parameter the capture never revealed reads
 `unknown` and triggers no rule. Where Stage 4a infers encryption or DH group

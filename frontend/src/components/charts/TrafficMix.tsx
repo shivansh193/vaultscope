@@ -11,12 +11,14 @@ import { cellClass, ChartFrame } from "./ChartFrame";
  */
 export function TrafficMix({ sessions }: { sessions: VPNSession[] }) {
   const mix = trafficMix(sessions);
-  // Stage 4b is Block A's; until a trained model lands every session comes back
-  // "Other" at zero confidence. Saying so beats drawing a confident-looking
-  // donut of one slice.
+  // Without a trained model every session comes back "Other" at zero
+  // confidence. Saying so beats drawing a confident-looking donut of one slice.
   const untrained =
-    sessions.length > 0 &&
-    sessions.every((s) => ["untrained", "fixture"].includes(s.traffic_prediction.model_version));
+    sessions.length > 0 && sessions.every((s) => s.traffic_prediction.model_version === "untrained");
+  // Sessions whose peers carried no ESP were never classified (trafficMix skips them).
+  const withoutEsp = sessions.filter(
+    (s) => s.traffic_prediction.model_version === "no-esp-observed",
+  ).length;
   const total = mix.reduce((sum, slice) => sum + slice.count, 0);
   const share = (count: number) => (total ? Math.round((count / total) * 100) : 0);
 
@@ -52,8 +54,13 @@ export function TrafficMix({ sessions }: { sessions: VPNSession[] }) {
         </p>
       )}
       {mix.length === 0 ? (
-        <p className="py-16 text-center text-[length:var(--text-subhead)] text-label-secondary">
-          No traffic predictions yet.
+        <p
+          data-testid="traffic-empty"
+          className="py-16 text-center text-[length:var(--text-subhead)] text-label-secondary"
+        >
+          {withoutEsp > 0
+            ? "No session in this capture carried ESP, so there was no tunnel traffic to classify."
+            : "No traffic predictions yet."}
         </p>
       ) : (
         <div className="flex flex-wrap items-center gap-6">
@@ -99,6 +106,12 @@ export function TrafficMix({ sessions }: { sessions: VPNSession[] }) {
             ))}
           </ul>
         </div>
+      )}
+      {mix.length > 0 && withoutEsp > 0 && (
+        <p className="mt-3 text-[length:var(--text-caption)] text-label-tertiary">
+          {withoutEsp} session{withoutEsp === 1 ? "" : "s"} carried no ESP and{" "}
+          {withoutEsp === 1 ? "is" : "are"} left out.
+        </p>
       )}
     </ChartFrame>
   );

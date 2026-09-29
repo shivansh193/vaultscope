@@ -36,7 +36,7 @@ point it at a live NIC, or replay a stored capture, and it:
    using only packet size / timing / direction — the payload is encrypted,
 3. **scores every session** against an 18-rule CVE-linked engine and detects
    **runtime attacks** (downgrade, proposal enumeration, PSK-hash harvesting,
-   SPI replay, rekey storms, unexpected NAT-T) that static config review cannot
+   rekey storms, unexpected NAT-T) that static config review cannot
    see — each citing the **exact pcap frame numbers**, with the capture itself
    downloadable so anyone can verify it in Wireshark,
 4. **produces** an executive PDF, a technical HTML report with per-finding CVE
@@ -98,17 +98,21 @@ config diffs → SIEM export → risk-propagating peer graph.
 
 - **~5,700 lines** of pipeline/API Python, **16** React components across
   **7** console views.
-- **331** Python tests (parser, capture reader, ingestion, flow, classifiers,
+- **347** Python tests (parser, capture reader, ingestion, flow, classifiers,
   rules, anomalies, Analysis module, reports, API, jobs, live capture, the
-  Docker testbed), **52** vitest unit/component tests, **25** Cypress
+  Docker testbed), **57** vitest unit/component tests, **26** Cypress
   end-to-end tests against the real stack. CI runs all three on every push.
 - **18** security rules, each tied to a CVE / RFC / NIST reference.
 - Traffic classifier: **macro-F1 0.98** on a held-out split of the 300-capture
   strongSwan dataset (up from 0.79 on the synthetic bootstrap it replaced). Read
   it as proof the pipeline works end to end, **not** as a field accuracy — see §8.
-- **6** runtime attack detectors, each producing an `AnomalyEvent` with **exact
-  pcap frame numbers** as evidence; `data/demo/attack_capture.pcap` trips five
-  of them.
+- **5** runtime attack detectors firing end to end (a sixth, SPI collision,
+  works on session lists only — see §8), each producing an `AnomalyEvent` with
+  **exact pcap frame numbers** as evidence; `data/demo/attack_capture.pcap`
+  trips all five.
+- Protocol identification on the 300 labeled captures: cipher, integrity, DH
+  group, IKE version, IP version **300/300**; mode, PFS and peer auth are inside
+  the encrypted IKE_AUTH and read `unknown` rather than a guess.
 
 ---
 
@@ -182,8 +186,12 @@ config diffs → SIEM export → risk-propagating peer graph.
   networks will score lower, and Video vs Web is genuinely hard.
 - The **Chat class is a disclosed substitute**: a scripted bursty generator,
   not real messenger traffic.
-- **IKEv2 authentication is encrypted**, so it reads *undetermined* unless the
-  capture was decrypted; PSK-dependent rules (R06, R13) then stay silent rather
+- **IKEv2 mode, PFS and authentication are encrypted** (IKE_AUTH), so they read
+  *unknown* unless the capture was decrypted; tunnel/transport is the one
+  requirement of the PS we identify only on IKEv1 or decrypted IKEv2. SA
+  lifetime is never sent in IKEv2. SPI-collision detection does not fire
+  through the pipeline (SAs are keyed on initiator SPI).
+- Dependent rules (R06, R10, R13) then stay silent rather
   than guess.
 - `data/demo/attack_capture.pcap` is **synthetic** — built from the parser's
   byte-level test builders to demonstrate the detectors with checkable evidence.

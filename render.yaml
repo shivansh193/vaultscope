@@ -1,0 +1,27 @@
+# Render blueprint for the VaultScope API (the console is hosted on Vercel).
+#
+#   Render dashboard -> New -> Blueprint -> this repository.
+#
+# Public demo settings: interface capture is off (a hosted container has no NIC
+# worth sniffing), uploads are capped, and deleting jobs needs the generated
+# operator token. Set VAULTSCOPE_CORS_ORIGINS to the Vercel console's URL.
+# The free plan has no persistent disk, so jobs and stored captures last until
+# the instance restarts or sleeps.
+services:
+  - type: web
+    name: vaultscope-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "8000"
+      - key: VAULTSCOPE_INTERFACE_CAPTURE
+        value: "0"
+      - key: VAULTSCOPE_MAX_UPLOAD_MB
+        value: "50"
+      - key: VAULTSCOPE_API_TOKEN
+        generateValue: true
+      - key: VAULTSCOPE_CORS_ORIGINS
+        sync: false
