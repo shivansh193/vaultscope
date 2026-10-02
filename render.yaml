@@ -20,7 +20,9 @@ services:
       - key: VAULTSCOPE_INTERFACE_CAPTURE
         value: "0"
       - key: VAULTSCOPE_MAX_UPLOAD_MB
-        value: "50"
+        value: "25"
+      - key: VAULTSCOPE_SEED_DEMO
+        value: "1"
       - key: VAULTSCOPE_API_TOKEN
         generateValue: true
       - key: VAULTSCOPE_CORS_ORIGINS

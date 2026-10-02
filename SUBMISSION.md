@@ -98,9 +98,9 @@ config diffs → SIEM export → risk-propagating peer graph.
 
 - **~5,700 lines** of pipeline/API Python, **16** React components across
   **7** console views.
-- **347** Python tests (parser, capture reader, ingestion, flow, classifiers,
+- **378** Python tests (parser, capture reader, ingestion, flow, classifiers,
   rules, anomalies, Analysis module, reports, API, jobs, live capture, the
-  Docker testbed), **57** vitest unit/component tests, **26** Cypress
+  Docker testbed), **57** vitest unit/component tests, **23** Cypress
   end-to-end tests against the real stack. CI runs all three on every push.
 - **21** security rules, each tied to a CVE / RFC / NIST reference, mapped onto **6** compliance baselines.
 - Traffic classifier: **macro-F1 0.98** on a held-out split of the 300-capture

@@ -12,6 +12,7 @@ RUN apt-get update \
         libpango-1.0-0 \
         libpangoft2-1.0-0 \
         libcairo2 \
+        fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

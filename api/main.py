@@ -20,7 +20,9 @@ import asyncio
 import contextlib
 import hmac
 import json
+import logging
 import os
+import shutil
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -85,12 +87,46 @@ _CAPTURE_MAGIC = {
 }
 
 
+async def _seed_demo_job() -> None:
+    """Analyse the bundled demo capture when the store is empty.
+
+    A hosted instance without a persistent disk restarts empty; this keeps the
+    console from greeting a visitor with nothing. Runs off the startup path so
+    the health check answers immediately.
+    """
+    try:
+        if store.list_jobs(1) or not DEMO_CAPTURE.is_file():
+            return
+        job_id = str(uuid.uuid4())
+        target = CAPTURE_DIR / f"{job_id}.pcap"
+        await asyncio.to_thread(shutil.copyfile, DEMO_CAPTURE, target)
+        analysis = await asyncio.to_thread(analyze_capture, target, "pcap_upload")
+        for session in analysis.sessions:
+            session.capture_file = DEMO_CAPTURE.name
+        await asyncio.to_thread(
+            store.save_analysis,
+            job_id,
+            analysis.sessions,
+            analysis.anomalies,
+            analysis.stats,
+            capture_file=DEMO_CAPTURE.name,
+            capture_path=str(target),
+        )
+    except Exception:  # a failed seed must never stop the API from serving
+        logging.getLogger(__name__).exception("demo seed failed")
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     store.init_db()
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
+    seed = None
+    if os.environ.get("VAULTSCOPE_SEED_DEMO", "0") in ("1", "true", "yes"):
+        seed = asyncio.create_task(_seed_demo_job())
     yield
+    if seed is not None:
+        seed.cancel()
     if _run is not None and _run.status.state == "running":
         await _run.stop()
 

@@ -196,6 +196,7 @@
 - id: R20
   description: "Classical-only key exchange -- harvest-now-decrypt-later exposure to a quantum adversary"
   severity: LOW
+  advisory: true
   cve: null
   standard: "RFC 9370, CNSA 2.0, NIST IR 8547"
   remediation: pqc

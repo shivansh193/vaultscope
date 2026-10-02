@@ -37,6 +37,11 @@ _THREAT_GRADE: dict[str, tuple[str, str]] = {
 
 
 @functools.cache
+def _advisory_ids() -> frozenset[str]:
+    return frozenset(r["id"] for r in load_rules() if r.get("advisory"))
+
+
+@functools.cache
 def load_rules() -> list[dict[str, Any]]:
     """Parse and validate the rule table once per process."""
     rules = yaml.safe_load(RULES_PATH.read_text())
@@ -120,13 +125,17 @@ def evaluate_rules(session: VPNSession) -> SecurityAssessment:
         if _matches(session, rule)
     ]
 
-    penalty = sum(SEVERITY_PENALTY[f.severity] for f in findings)
+    # Advisory rules (e.g. R20, quantum exposure of an otherwise sound suite) are
+    # reported and mapped to compliance, but neither penalise nor set the verdict:
+    # otherwise no classical tunnel could ever be SAFE.
+    scored = [f for f in findings if f.rule_id not in _advisory_ids()]
+    penalty = sum(SEVERITY_PENALTY[f.severity] for f in scored)
     # R11 (>24h) and R12 (>8h) overlap by design -- the spec defines them as
     # independent thresholds, so a 24h+ lifetime is penalised by both.
     risk_score = max(0, 100 - penalty)
 
-    if findings:
-        overall = min((f.severity for f in findings), key=SEVERITY_ORDER.index)
+    if scored:
+        overall = min((f.severity for f in scored), key=SEVERITY_ORDER.index)
     else:
         overall = "SAFE"
 
