@@ -37,9 +37,28 @@ MONO = "ui-monospace, 'SF Mono', Menlo, monospace"
 def stats() -> dict:
     metrics = json.loads((ROOT / "models" / "eval_metrics.json").read_text())
     counts = Counter()
+    axes: dict[str, set] = {k: set() for k in ("suite", "dh", "pfs", "ip", "mode")}
+    cells = set()
     for path in (ROOT / "data" / "labels").glob("*.json"):
-        counts[json.loads(path.read_text())["traffic_class"]] += 1
+        label = json.loads(path.read_text())
+        counts[label["traffic_class"]] += 1
+        c = label["config"]
+        cell = (c["encryption"] + c["integrity"], c["dh_group"], c["pfs_status"], c["ip_version"], c["mode"])
+        cells.add(cell)
+        for axis, value in zip(axes, cell):
+            axes[axis].add(value)
+    rules = sum(
+        1
+        for line in (ROOT / "core" / "rules" / "rules.yaml").read_text().splitlines()
+        if line.startswith("- id:")
+    )
+    cells_total = 1
+    for values in axes.values():
+        cells_total *= len(values)
     return {
+        "rules": rules,
+        "cells": len(cells),
+        "cells_total": cells_total,
         "f1": metrics["f1_macro"],
         "accuracy": metrics["accuracy"],
         "source": metrics["source"],
@@ -221,7 +240,7 @@ def diagram_pipeline(s: dict) -> str:
         text(
             64,
             h - 34,
-            f"{s['captures']} labeled captures · 18 security rules · "
+            f"{s['captures']} labeled captures · {s['rules']} security rules · "
             f"traffic classifier macro-F1 {s['f1']:.2f} on held-out real captures",
             14,
             INK_3,
@@ -375,7 +394,7 @@ def diagram_evidence(s: dict) -> str:
         text(
             96,
             top + 274,
-            "144-cell matrix: mode x cipher x DH group x PFS x IP version",
+            f"{s['cells']} of {s['cells_total']} matrix cells: mode x cipher x DH group x PFS x IP version",
             13.5,
             INK_3,
             font=MONO,
@@ -384,7 +403,7 @@ def diagram_evidence(s: dict) -> str:
 
     # how it was made
     hy = top + 328
-    out.append(box(64, hy, 700, 340))
+    out.append(box(64, hy, 700, 284))
     out.append(text(96, hy + 42, "HOW IT WAS MADE", 13, INK_3, "700", spacing="0.08em"))
     made = [
         ("Real tunnels", "Two strongSwan peers per cell in Docker,"),
@@ -396,14 +415,14 @@ def diagram_evidence(s: dict) -> str:
         ("Reproducible", "One command, resumable, ~40 minutes."),
     ]
     for i, (lead, rest) in enumerate(made):
-        yy = hy + 84 + i * 30
+        yy = hy + 80 + i * 27
         if lead:
             out.append(text(96, yy, lead, 15, INK, "600"))
         out.append(text(232, yy, rest, 15, INK_2))
     out.append(
         text(
             96,
-            hy + 312,
+            hy + 268,
             "Chat is a declared substitution — a real messaging client cannot run in an isolated lab.",
             13.5,
             HIGH,
@@ -464,9 +483,9 @@ def diagram_evidence(s: dict) -> str:
         "Measured the way a model should be: a stratified 70/15/15 split, scored on captures the model "
         "never saw, and published as a full confusion matrix rather than a single headline figure."
     )
-    out.append(box(64, h - 132, w - 128, 84, fill=SURFACE, stroke=RULE))
+    out.append(box(64, h - 100, w - 128, 68, fill=SURFACE, stroke=RULE))
     for i, line in enumerate(wrap(note, 108)):
-        out.append(text(92, h - 100 + i * 24, line, 14.5, INK_2))
+        out.append(text(92, h - 70 + i * 22, line, 14.5, INK_2))
     out.append("</svg>")
     return "\n".join(out)
 
