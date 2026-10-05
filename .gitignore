@@ -89,6 +89,3 @@ tests/e2e/videos/
 
 # Captures the backend stores per job (evidence for anomaly frame numbers).
 data/captures/
-
-# Diagram source exports, generated outside the repo and not referenced by it
-vaultscope-diagrams/
